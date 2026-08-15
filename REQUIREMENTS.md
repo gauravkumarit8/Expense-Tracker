@@ -235,6 +235,7 @@ access + a validation step server-side.
 | 2026-08-15 | Discard raw message text after parsing | Single biggest privacy risk-reduction available; removes most of the value of a DB breach |
 | 2026-08-15 | No backend / no INTERNET permission (yet) | Strongest privacy story available; also simplifies Play Store review |
 | 2026-08-15 | Regex-based parsing over ML/NLP | Bank/UPI SMS formats are structured enough that regex is lighter, faster, fully explainable, and avoids shipping model weights |
+| 2026-08-15 | Removed `allprojects { repositories {...} }` from root `build.gradle` | Conflicted with `settings.gradle`'s `dependencyResolutionManagement { repositoriesMode = FAIL_ON_PROJECT_REPOS }`, which requires repos to be declared only in settings.gradle. `buildscript { repositories {...} }` (for resolving the Gradle/AGP/Kotlin plugins) is unaffected and stays. |
 
 ---
 

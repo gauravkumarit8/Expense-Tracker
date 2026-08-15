@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  allowBackup is already false at the manifest level (belt-and-braces).
+  This file exists so that if allowBackup is ever flipped to true in future,
+  the encrypted transaction DB is still explicitly excluded from cloud backup
+  and device-to-device transfer by default. See REQUIREMENTS.md Security ยง5.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="expense_tracker_encrypted.db" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="expense_tracker_encrypted.db" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App has no INTERNET permission at all currently, so this config is inert
+  but kept ready: if a future feature (e.g. remote regex-pattern updates via
+  Firebase Remote Config) adds network access, cleartext traffic stays
+  disabled by default and only explicitly allowlisted domains would be added
+  here. Do not weaken this without updating REQUIREMENTS.md.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

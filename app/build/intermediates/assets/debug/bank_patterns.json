@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "patterns": [
+    {
+      "senderMatch": "HDFCBK|HDFC",
+      "debitedRegex": "(?i)Rs\\.?\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?debited.{0,40}?(?:to|at)\\s+([A-Za-z0-9@._\\- ]{2,40})",
+      "creditedRegex": "(?i)Rs\\.?\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?credited.{0,40}?(?:by|from)\\s+([A-Za-z0-9@._\\- ]{2,40})"
+    },
+    {
+      "senderMatch": "ICICIB|ICICI",
+      "debitedRegex": "(?i)INR\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?debited.{0,40}?(?:to|towards)\\s+([A-Za-z0-9@._\\- ]{2,40})",
+      "creditedRegex": "(?i)INR\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?credited.{0,40}?(?:from)\\s+([A-Za-z0-9@._\\- ]{2,40})"
+    },
+    {
+      "senderMatch": "SBIINB|SBI",
+      "debitedRegex": "(?i)Rs\\.?\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:withdrawn|debited).{0,40}?(?:at|to)\\s+([A-Za-z0-9@._\\- ]{2,40})",
+      "creditedRegex": "(?i)Rs\\.?\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?credited.{0,40}?(?:from)\\s+([A-Za-z0-9@._\\- ]{2,40})"
+    },
+    {
+      "senderMatch": "GENERIC_UPI",
+      "debitedRegex": "(?i)(?:Rs\\.?|INR)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:paid|sent|debited).{0,40}?(?:to)\\s+([A-Za-z0-9@._\\- ]{2,40})",
+      "creditedRegex": "(?i)(?:Rs\\.?|INR)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited).{0,40}?(?:from)\\s+([A-Za-z0-9@._\\- ]{2,40})"
+    }
+  ],
+  "excludeKeywords": [
+    "OTP", "one time password", "do not share", "verification code"
+  ],
+  "transactionKeywords": [
+    "debited", "credited", "withdrawn", "spent", "paid", "received", "a/c", "upi", "txn"
+  ]
+}
