@@ -1,0 +1,27 @@
+# Build outputs
+/build/
+app/build/
+*/build/
+
+# Gradle
+.gradle/
+gradle-app.setting
+
+# Local config
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Keystores (never commit signing keys)
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

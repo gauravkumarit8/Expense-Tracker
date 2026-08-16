@@ -2,10 +2,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Fallback path for reading transaction SMS directly. Primary path is
-         NotificationListenerService below (see REQUIREMENTS.md ยง3). -->
+    <!-- TEMPORARILY DISABLED FOR LOCAL DEV/TESTING — see REQUIREMENTS.md
+         "Dev Mode: SMS Fallback Disabled". Google Play Protect blocks
+         sideloaded (non-Play-Store) APKs that request RECEIVE_SMS/READ_SMS,
+         since this exact permission combination matches banking-fraud
+         malware patterns. The NotificationListenerService below is our
+         PRIMARY capture path and does not need these permissions at all, so
+         disabling this fallback path unblocks local sideload testing.
+         Re-enable both lines below (and the <receiver> block further down)
+         once building a signed release build or distributing via Play
+         Store, where this friction doesn't apply.
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
+    -->
 
     <!-- Needed so the listener service survives OEM aggressive battery killers -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -20,7 +29,7 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
@@ -48,7 +57,14 @@
         </service>
 
         <!-- FALLBACK capture path: raw SMS broadcast, for messages that never
-             surface as a notification on some OEM/dual-SIM configurations. -->
+             surface as a notification on some OEM/dual-SIM configurations.
+             TEMPORARILY DISABLED — see the permission comment above and
+             REQUIREMENTS.md "Dev Mode: SMS Fallback Disabled". Registering
+             this receiver requires RECEIVE_SMS/READ_SMS, which are commented
+             out above, so this block is commented out too to keep them in
+             sync — an uncommented receiver with no granted permission would
+             just fail silently at runtime, which is worse than leaving it
+             fully out until both are re-enabled together.
         <receiver
             android:name=".receiver.SmsReceiver"
             android:exported="true"
@@ -57,6 +73,7 @@
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
+        -->
 
     </application>
 </manifest>
