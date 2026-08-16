@@ -73,6 +73,38 @@ Deduplication: both paths may fire for the same message. `Transaction.rawTextHas
 - No persistent foreground service. `NotificationListenerService` is already
   a bound system service and doesn't need an additional foreground notification.
 
+## 2.6 UI layer (updated 2026-08-16)
+- Search bar (merchant/bank), direction filter chips (All/Sent/Received/Needs
+  review), date-range filter chips (Today/This week/This month/All time).
+- Summary cards react to the active filter set, not the full history.
+- Grouped-by-day list with color-coded direction icons (see ยง Decision Log).
+
+## 2.7 Feature Roadmap vs. Competitors
+
+Researched against real India-market apps (Walnut/axio, Money View, ET
+Money) — sourced 2026-08-16, see citations in that session.
+
+| Feature | Status |
+|---|---|
+| SMS/notification auto-capture | ✅ Have it |
+| Multi-bank support | ✅ Infrastructure supports it |
+| Search & filter transactions | ✅ Have it (2026-08-16) |
+| Sent/received summary | ✅ Have it |
+| Custom categories + auto-categorization | ❌ Not yet — high priority, every competitor has this |
+| Manual cash-expense entry | ❌ Not yet — important gap, cash never generates an SMS |
+| Charts/spending trends | ❌ Not yet — Vico dependency already added, unused |
+| Budget limits per category | ❌ Not yet |
+| Bill/subscription reminders | ❌ Not yet |
+| Notes/tags on transactions | ❌ Not yet |
+| Export to CSV/PDF | ❌ Not yet |
+| App lock (biometric/PIN) | ❌ Not yet — already tracked as an Open Item |
+| Receipt photo attachment | ❌ Not yet — lower priority |
+| Bank-linked Pay Later/loans | Out of scope — lending product, not expense tracking |
+| Bill splitting with friends | Out of scope for now — needs multi-user infra |
+
+**Suggested build order** (highest user value first): categories →
+manual cash entry → charts → app lock → budgets/reminders → export.
+
 ---
 
 ## 3. Security & Privacy (see prior design discussion — this is the source of truth)
@@ -88,7 +120,36 @@ Deduplication: both paths may fire for the same message. `Transaction.rawTextHas
 
 ---
 
-## 4. Dev Environment Setup (GitHub Codespaces)
+## 3.5 Dev Mode: SMS Fallback Temporarily Disabled
+
+**Status as of 2026-08-15: `RECEIVE_SMS`/`READ_SMS` permissions and the
+`SmsReceiver` registration are commented out in `AndroidManifest.xml`.**
+
+**Why**: Google Play Protect blocks/cancels sideloaded (non-Play-Store) APK
+installs that request `RECEIVE_SMS`/`READ_SMS`, since this exact permission
+pair matches banking-fraud malware behavior patterns (see ยง3 threat model —
+the same reasoning that makes us cautious about this permission in the first
+place is what's now triggering the block during local dev testing). This
+made it impossible to sideload a debug build onto a real phone for testing.
+
+**What still works with this disabled**: the entire primary capture path —
+`NotificationCaptureService` → `ParseAndStoreWorker` → encrypted Room DB →
+UI — is untouched. This is sufficient to test the full pipeline end-to-end
+for any bank/UPI app whose alerts arrive as Android notifications (which is
+most of them). Only the narrower fallback case (SMS that never surfaces as a
+notification on some OEM/dual-SIM setups) is untestable right now.
+
+**How to re-enable**: uncomment the two `<uses-permission>` lines and the
+`<receiver>` block in `AndroidManifest.xml` (both are clearly marked). Do
+this before:
+- Building a signed release build (Play Protect's sideload heuristic doesn't
+  apply to properly signed + Play-Store-distributed apps)
+- Submitting to Play Console for review
+
+**Open item**: re-enable and re-test the SMS fallback path before any real
+release. Tracked in ยง7 Open Items below.
+
+
 
 Run once per Codespace:
 ```bash
@@ -185,10 +246,31 @@ Location: `app/src/main/assets/bank_patterns.json`
 
 Currently covers (India-focused, since that's the target market implied by
 sender-ID format assumptions like `HDFCBK`, `ICICIB`, `SBIINB`):
-- HDFC Bank
-- ICICI Bank
-- SBI
-- Generic UPI fallback pattern
+
+| Bank | Status | Source |
+|---|---|---|
+| Kotak (`KOTAKB`) | **Verified** — both directions confirmed against real messages on the dev's own phone | Live capture, 2026-08-16 |
+| HDFC (`HDFCBK`) | **Verified** — both directions confirmed against real messages | Live capture, 2026-08-16. Multi-line debit format required the DOTALL fix (ยง8). |
+| Slice (`SLCBNK`) | **Verified** — credited side confirmed against a real message (no debited sample seen yet) | Live capture, 2026-08-16. No counterparty name in message format — required the optional-clause fix (ยง8). |
+| ICICI (`ICICIB`) | Grounded, not device-verified | Structure inferred from public examples in the open-source [`transaction-sms-parser`](https://github.com/saurabhgupta050890/transaction-sms-parser) library's docs |
+| SBI (`SBIINB`) | Grounded, not device-verified | Generic ATM/debit wording pattern, no bank-specific sample found |
+| Axis (`AXISB`) | Grounded, not device-verified | Same source as ICICI; listed as tested by that library |
+| Generic UPI fallback | Grounded | Combines the widened match-window fix with a real ECS-style debit sample found via the same source |
+
+**Known gap**: credit card "spend" notifications (e.g.
+`"Rs.2000 spent on HDFC Visa Credit Card 4321. Avbl credit limit Rs.50000."`)
+use a different structure (`"on CARD_NAME"` instead of `"to/from MERCHANT"`)
+and are **not yet matched** by any pattern above — a naive fix (adding `on`
+as a merchant-preposition alternative) risks misinterpreting the `"on DATE"`
+clause present in most other message formats as a merchant name instead.
+Needs a dedicated credit-card-specific pattern later, not a shared one.
+
+**Lesson learned**: don't assume word order or match-window size from
+generic examples — the original 40-char lazy-match window was too narrow
+for real messages where the merchant/date clause appears further from the
+amount than expected (see the ECS sample above, ~70 chars). Widened to an
+unbounded lazy `.*?` (still guarded by the existing ReDoS timeout in
+`TransactionParser.safeFind`).
 
 **Process for adding a new bank format:**
 1. Get 2-3 real (anonymized) sample SMS for the new sender.
@@ -219,9 +301,11 @@ access + a validation step server-side.
 - [ ] Gradle wrapper generation + commit (see ยง4 note)
 - [ ] Unit tests for `TransactionParser` per bank pattern
 - [ ] OEM-specific "allow autostart" guidance screen for MIUI/ColorOS/FuntouchOS etc.
-- [ ] App icon / branding assets (currently using default mipmap reference, not provided)
+- [ ] App icon / branding assets — currently using `@android:drawable/sym_def_app_icon` (a built-in system placeholder) so the build isn't blocked. Replace with real `mipmap-*dpi` assets + adaptive icon before any real device testing/release; see Decision Log 2026-08-15.
 - [ ] Handle multi-SIM / dual-SIM sender variations
-- [ ] CI: GitHub Actions workflow to run `./gradlew test lint assembleDebug` on push
+- [ ] **Remove temporary `BuildConfig.DEBUG` raw-text logging** in `NotificationCaptureService` once parser accuracy is validated across more real bank/UPI samples — see ยง8 Decision Log 2026-08-16
+- [ ] Verify debited-side (money sent) regex against a real sample — only the credited-side has been confirmed against real data so far
+- [ ] Test additional banks/UPI apps beyond Kotak as real samples become available
 
 ---
 
@@ -236,6 +320,17 @@ access + a validation step server-side.
 | 2026-08-15 | No backend / no INTERNET permission (yet) | Strongest privacy story available; also simplifies Play Store review |
 | 2026-08-15 | Regex-based parsing over ML/NLP | Bank/UPI SMS formats are structured enough that regex is lighter, faster, fully explainable, and avoids shipping model weights |
 | 2026-08-15 | Removed `allprojects { repositories {...} }` from root `build.gradle` | Conflicted with `settings.gradle`'s `dependencyResolutionManagement { repositoriesMode = FAIL_ON_PROJECT_REPOS }`, which requires repos to be declared only in settings.gradle. `buildscript { repositories {...} }` (for resolving the Gradle/AGP/Kotlin plugins) is unaffected and stays. |
+| 2026-08-15 | Pinned `org.gradle.java.home` in `gradle.properties` to a JDK 17 path | Codespaces' default JDK was newer than Gradle 8.5 supports ("Unsupported class file major version 69" = Java 25). Relying on shell `JAVA_HOME` wasn't reliable across Gradle daemon restarts, so pinned explicitly in the project file instead. Path is environment-specific — update if your JDK 17 installs elsewhere. |
+| 2026-08-15 | Temporary app icon: `@android:drawable/sym_def_app_icon` | No real icon assets exist yet, and `AndroidManifest.xml` referenced `@mipmap/ic_launcher` which didn't exist, failing `processDebugResources`. Swapped to a built-in system resource to unblock the build. Must be replaced with real branding before any release — tracked in Open Items. |
+| 2026-08-15 | Added `androidx.lifecycle:lifecycle-runtime-compose:2.7.0` dependency | `MainActivity.kt` used `collectAsStateWithLifecycle`, which lives in this artifact, not in `lifecycle-runtime-ktx` (which was already present but insufficient). Missing import cascaded into "unresolved reference" errors on `Transaction` fields since the compiler couldn't infer `tx`'s type. |
+| 2026-08-15 | Commented out `RECEIVE_SMS`/`READ_SMS` permissions + `SmsReceiver` registration (dev-mode only) | Play Protect fully blocked/canceled sideloaded APK installs requesting this permission pair. Primary capture path (`NotificationListenerService`) is unaffected and sufficient for pipeline testing. Must re-enable before any signed/release build — see ยง3.5. |
+| 2026-08-16 | Added `kotlin-serialization` compiler plugin (root `build.gradle` classpath + `app/build.gradle` plugins block) | `kotlinx-serialization-json` runtime library alone is not enough — the compiler plugin is required to actually generate a serializer for `@Serializable` classes. Without it, `BankPatternsLoader.load()` threw `SerializationException: Serializer for class 'BankPatternConfig' is not found` at runtime, causing every `ParseAndStoreWorker` job to fail silently (visible only via `adb logcat`, not in the UI) — no transactions were ever reaching the DB despite notification access being correctly granted. |
+| 2026-08-16 | `NotificationCaptureService` now uses notification **title** (not package name) as the sender-matching key | `bankOrSource`/pattern matching was comparing against `pkg` (e.g. `com.google.android.apps.messaging`), which never matches any `senderMatch` value like `HDFCBK`. The title field carries the actual SMS sender ID for default-messaging-app notifications. |
+| 2026-08-16 | Rewrote `bank_patterns.json` regexes to handle keyword-before-amount phrasing (e.g. Kotak's `"Received Rs.1.00 ... from X"`), not just amount-before-keyword (`"Rs.500 debited ... to X"`) | Real captured sample (`JK-KOTAKB-S: "Received Rs.1.00 in your Kotak Bank AC 2863 from Mr GAURAV KUMAR on 16-08-26..."`) revealed our original assumption about word order was wrong for at least this bank. New regexes use optional non-capturing keyword groups on both sides of the amount so capture-group indices stay fixed regardless of which side matched. Verified against the real sample — see ยง6. Debit-side ordering is inferred/untested pending a real debit sample. |
+| 2026-08-16 | Added `(?s)` DOTALL flag and made the counterparty clause fully optional in `bank_patterns.json` | Real HDFC sample was multi-line (`"Sent Rs.1.00\nFrom HDFC Bank...\nTo Mr GAURAV KUMAR"`) — `.` doesn't match `\n` by default, so the lazy `.*?` couldn't cross line breaks. Real Slice sample has no counterparty name at all (`"Received Rs. 1 on ... in your A/c ... via UPI"`), so the "from X" clause needed to become optional rather than mandatory. |
+| 2026-08-16 | **Moved direction detection out of regex-match-order and into explicit keyword search** in `TransactionParser.parse()` | Making the counterparty clause optional (previous fix) had a side effect: `debitedRegex`'s "to X" clause could spuriously match credit messages too, since "to" is a generic preposition (e.g. real HDFC sample: `"Rs.1.00 credited **to** HDFC Bank A/c..."` — "to" here refers to the account, not a debit recipient). This caused a real credited transaction to be misclassified as SENT with merchant "Unknown". Fixed by determining `Direction` first via an explicit `\b(credited|received)\b` vs `\b(debited|sent|spent|withdrawn|paid)\b` keyword check, then running only the matching regex for extraction — debit and credit paths can no longer cross-match each other. Verified against all 5 real samples collected so far (Kotak×2, HDFC×2, Slice). |
+| 2026-08-16 | Added `(` to the counterparty capture's stop-boundary lookahead | Real HDFC credit sample's counterparty is a VPA followed by `" (UPI ..."` — the `(` wasn't in the original stop-character set (`.`, `,`, `" on"`, end-of-string), so the 30-char-capped lazy capture ran out of room before finding a valid stop point and the whole optional clause failed to match, showing "Unknown" instead of the VPA. |
+| 2026-08-16 | Added temporary `BuildConfig.DEBUG`-gated raw-text log in `NotificationCaptureService` | Needed to see real message formats to fix regex patterns, since our design intentionally never persists raw text. Gated so it can never ship in a release build (`if (BuildConfig.DEBUG)`); required adding `buildConfig true` to `buildFeatures`. Must be removed once parser accuracy is validated across more banks — tracked in Open Items. |
 
 ---
 

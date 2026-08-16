@@ -42,29 +42,36 @@ class TransactionParser(context: Context) {
 
         val hash = sha256(text)
 
+        // Determine direction FIRST from explicit keywords, independently of
+        // which regex happens to match. This avoids a bug where a credit
+        // message like "Rs.1.00 credited TO HDFC Bank A/c..." spuriously
+        // matched the debit pattern's "to X" clause (since "to" is a common
+        // preposition, not exclusive to debit messages) and got
+        // misclassified as SENT. See REQUIREMENTS.md Decision Log 2026-08-16.
+        val direction = when {
+            Regex("\\b(credited|received)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.RECEIVED
+            Regex("\\b(debited|sent|spent|withdrawn|paid)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.SENT
+            else -> Direction.UNKNOWN
+        }
+
         // 3. Try sender-specific patterns first, then a generic UPI fallback
         val genericEntry = config.patterns.first { it.senderMatch == "GENERIC_UPI" }
         val specificEntry = config.patterns.firstOrNull { pattern ->
             pattern.senderMatch != "GENERIC_UPI" &&
                 pattern.senderMatch.split("|").any { sender.contains(it, ignoreCase = true) }
         }
+        val entry = specificEntry ?: genericEntry
 
-        var debitMatch = specificEntry?.let { safeFind(it.debitedRegex, text) }
-        var creditMatch = specificEntry?.let { safeFind(it.creditedRegex, text) }
-
-        // If a sender-specific pattern was selected but didn't actually match
-        // the text (bank changed its wording, or our sample was wrong),
-        // retry with the generic pattern before giving up.
-        if (debitMatch == null && creditMatch == null) {
-            debitMatch = safeFind(genericEntry.debitedRegex, text)
-            creditMatch = safeFind(genericEntry.creditedRegex, text)
+        // Only run the regex matching the direction we already determined —
+        // never try both and let whichever matches "win".
+        val match = when (direction) {
+            Direction.SENT -> safeFind(entry.debitedRegex, text) ?: (if (entry !== genericEntry) safeFind(genericEntry.debitedRegex, text) else null)
+            Direction.RECEIVED -> safeFind(entry.creditedRegex, text) ?: (if (entry !== genericEntry) safeFind(genericEntry.creditedRegex, text) else null)
+            Direction.UNKNOWN -> null
         }
 
-        val (amountStr, counterparty, direction) = when {
-            debitMatch != null -> Triple(debitMatch.groupValues[1], debitMatch.groupValues.getOrNull(2), Direction.SENT)
-            creditMatch != null -> Triple(creditMatch.groupValues[1], creditMatch.groupValues.getOrNull(2), Direction.RECEIVED)
-            else -> Triple(null, null, Direction.UNKNOWN)
-        }
+        val amountStr = match?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+        val counterparty = match?.groupValues?.getOrNull(2)
 
         val amount = amountStr?.replace(",", "")?.toDoubleOrNull()
 
@@ -73,7 +80,7 @@ class TransactionParser(context: Context) {
         return Transaction(
             amount = amount ?: 0.0,
             direction = direction,
-            merchantOrContact = counterparty?.trim(),
+            merchantOrContact = counterparty?.trim()?.takeIf { it.isNotBlank() },
             bankOrSource = sender,
             timestampMillis = timestampMillis,
             rawTextHash = hash,
