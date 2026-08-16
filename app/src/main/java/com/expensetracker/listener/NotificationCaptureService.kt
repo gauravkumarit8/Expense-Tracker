@@ -5,6 +5,7 @@ import android.service.notification.StatusBarNotification
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.expensetracker.BuildConfig
 import com.expensetracker.worker.ParseAndStoreWorker
 
 /**
@@ -49,13 +50,31 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val combined = "$title $text"
 
+        // Use the notification title as the "sender" for pattern matching —
+        // for a default SMS app notification, the title is usually the
+        // actual sender ID (e.g. "HDFCBK") or phone number, which is what
+        // our bank_patterns.json senderMatch values are written against.
+        // The package name (pkg) is only useful for filtering which apps we
+        // bother processing at all, not for identifying which bank sent it.
+        val senderForMatching = title.ifBlank { pkg }
+
+        if (BuildConfig.DEBUG) {
+            // TEMP DEV-ONLY DIAGNOSTIC — logs raw notification text locally
+            // to this device's logcat so regex patterns in bank_patterns.json
+            // can be tuned against real message formats during development.
+            // Gated by BuildConfig.DEBUG so it can NEVER ship in a release
+            // build. Remove this block entirely once parser accuracy is
+            // validated — see REQUIREMENTS.md ยง3.5/Open Items.
+            android.util.Log.d("ExpenseTrackerDEBUG", "pkg=$pkg title=[$title] text=[$text]")
+        }
+
         // Hand off immediately to a WorkManager job. We do NOT parse inline
         // here — keeps this callback (which the OS expects to return fast)
         // lightweight, and WorkManager handles retry/battery constraints.
         val request = OneTimeWorkRequestBuilder<ParseAndStoreWorker>()
             .setInputData(
                 workDataOf(
-                    ParseAndStoreWorker.KEY_SENDER to pkg,
+                    ParseAndStoreWorker.KEY_SENDER to senderForMatching,
                     ParseAndStoreWorker.KEY_TEXT to combined,
                     ParseAndStoreWorker.KEY_TIMESTAMP to sbn.postTime
                 )

@@ -43,12 +43,22 @@ class TransactionParser(context: Context) {
         val hash = sha256(text)
 
         // 3. Try sender-specific patterns first, then a generic UPI fallback
-        val entry = config.patterns.firstOrNull { pattern ->
-            pattern.senderMatch.split("|").any { sender.contains(it, ignoreCase = true) }
-        } ?: config.patterns.first { it.senderMatch == "GENERIC_UPI" }
+        val genericEntry = config.patterns.first { it.senderMatch == "GENERIC_UPI" }
+        val specificEntry = config.patterns.firstOrNull { pattern ->
+            pattern.senderMatch != "GENERIC_UPI" &&
+                pattern.senderMatch.split("|").any { sender.contains(it, ignoreCase = true) }
+        }
 
-        val debitMatch = safeFind(entry.debitedRegex, text)
-        val creditMatch = safeFind(entry.creditedRegex, text)
+        var debitMatch = specificEntry?.let { safeFind(it.debitedRegex, text) }
+        var creditMatch = specificEntry?.let { safeFind(it.creditedRegex, text) }
+
+        // If a sender-specific pattern was selected but didn't actually match
+        // the text (bank changed its wording, or our sample was wrong),
+        // retry with the generic pattern before giving up.
+        if (debitMatch == null && creditMatch == null) {
+            debitMatch = safeFind(genericEntry.debitedRegex, text)
+            creditMatch = safeFind(genericEntry.creditedRegex, text)
+        }
 
         val (amountStr, counterparty, direction) = when {
             debitMatch != null -> Triple(debitMatch.groupValues[1], debitMatch.groupValues.getOrNull(2), Direction.SENT)
