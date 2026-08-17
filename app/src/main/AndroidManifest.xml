@@ -19,6 +19,9 @@
     <!-- Needed so the listener service survives OEM aggressive battery killers -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Required on Android 13+ to show bill/subscription reminder notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- No INTERNET permission requested on purpose: this app is on-device only.
          Do not add android.permission.INTERNET unless a feature genuinely requires
          network access — its absence is itself a strong privacy/security signal

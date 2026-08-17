@@ -8,10 +8,11 @@ import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import com.expensetracker.util.KeystoreHelper
 
-@Database(entities = [Transaction::class], version = 1, exportSchema = false)
+@Database(entities = [Transaction::class, Reminder::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
+    abstract fun reminderDao(): ReminderDao
 
     companion object {
         private const val DB_NAME = "expense_tracker_encrypted.db"

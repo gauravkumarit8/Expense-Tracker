@@ -23,7 +23,9 @@ data class Transaction(
     val merchantOrContact: String?,   // best-effort extracted counterparty
     val bankOrSource: String,         // sender id, e.g. "HDFCBK"
     val timestampMillis: Long,        // taken from SMS/notification post time, not parsed from text
-    val category: String? = null,     // user-assigned or auto-categorized later
+    val category: String? = null,     // Category enum name; auto-assigned at insert, user-overridable
+    val note: String? = null,         // free-text note, user-entered only
+    val tags: String? = null,         // comma-separated tags, user-entered only
     val rawTextHash: String,          // SHA-256 of original text, for dedup only
     val needsReview: Boolean = false  // true if parser had low confidence
 )

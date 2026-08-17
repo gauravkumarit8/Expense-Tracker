@@ -90,12 +90,12 @@ Money) — sourced 2026-08-16, see citations in that session.
 | Multi-bank support | ✅ Infrastructure supports it |
 | Search & filter transactions | ✅ Have it (2026-08-16) |
 | Sent/received summary | ✅ Have it |
-| Custom categories + auto-categorization | ❌ Not yet — high priority, every competitor has this |
+| Custom categories + auto-categorization | ✅ Have it (2026-08-16) |
 | Manual cash-expense entry | ❌ Not yet — important gap, cash never generates an SMS |
 | Charts/spending trends | ❌ Not yet — Vico dependency already added, unused |
 | Budget limits per category | ❌ Not yet |
-| Bill/subscription reminders | ❌ Not yet |
-| Notes/tags on transactions | ❌ Not yet |
+| Bill/subscription reminders | ✅ Have it (2026-08-16) — manual entry only, no auto-detection of recurring merchants yet |
+| Notes/tags on transactions | ✅ Have it (2026-08-16) |
 | Export to CSV/PDF | ❌ Not yet |
 | App lock (biometric/PIN) | ❌ Not yet — already tracked as an Open Item |
 | Receipt photo attachment | ❌ Not yet — lower priority |
@@ -104,6 +104,38 @@ Money) — sourced 2026-08-16, see citations in that session.
 
 **Suggested build order** (highest user value first): categories →
 manual cash entry → charts → app lock → budgets/reminders → export.
+
+## 2.8 Categories, Notes/Tags, and Reminders (added 2026-08-16)
+
+**Categories**: `Category` enum (`data/Category.kt`) with 9 predefined values
+(Food, Groceries, Shopping, Bills, Transfer, Entertainment, Travel, Health,
+Other). `Categorizer` (`parser/Categorizer.kt`) auto-assigns a category at
+insert time via keyword matching against the merchant name first, then the
+raw message text — no ML, no network call, consistent with the project's
+lightweight/on-device/explainable design goals. Users can override via the
+transaction detail dialog; manual overrides are never re-auto-categorized.
+
+**Notes/Tags**: `Transaction` gained `note: String?` and `tags: String?`
+(comma-separated) columns, user-entered only via the detail dialog (tap any
+transaction row). Search now also matches against notes and tags, not just
+merchant/bank.
+
+**Reminders**: new `Reminder` entity/table (title, optional amount,
+dueDayOfMonth, notes). A daily `ReminderCheckWorker` (WorkManager periodic
+work, `ExistingPeriodicWorkPolicy.KEEP`) compares today's date against each
+reminder's due day and fires a local notification via
+`ReminderNotificationHelper`, guarded against duplicate same-month firing via
+`lastNotifiedYearMonth`. Requires `POST_NOTIFICATIONS` permission on Android
+13+, requested at runtime the first time the Reminders screen is opened.
+Reminders are purely local/manual right now — no auto-detection of
+recurring merchants yet (see Open Items).
+
+**Schema note**: this added a new table and new columns to `transactions`,
+bumping `AppDatabase` from version 1 to 2. Since `fallbackToDestructiveMigration()`
+is still in place, this wipes existing local data on upgrade — acceptable at
+this dev stage, but **must be replaced with a real `Migration` before any
+release build**, or every user's transaction history would be deleted on
+app update. Tracked in Open Items.
 
 ---
 
@@ -251,11 +283,12 @@ sender-ID format assumptions like `HDFCBK`, `ICICIB`, `SBIINB`):
 |---|---|---|
 | Kotak (`KOTAKB`) | **Verified** — both directions confirmed against real messages on the dev's own phone | Live capture, 2026-08-16 |
 | HDFC (`HDFCBK`) | **Verified** — both directions confirmed against real messages | Live capture, 2026-08-16. Multi-line debit format required the DOTALL fix (ยง8). |
-| Slice (`SLCBNK`) | **Verified** — credited side confirmed against a real message (no debited sample seen yet) | Live capture, 2026-08-16. No counterparty name in message format — required the optional-clause fix (ยง8). |
+| Slice (`SLCBNK`) | **Verified** — both directions confirmed. Slice uses at least two different debit message formats (`"Rs.X sent from..."` and `"UPI payment of Rs.X ... is successful"`), only the latter required the `"payment"` keyword fix (ยง8) | Live capture, 2026-08-16 |
+| Central Bank of India | **Verified** — credited side confirmed against a real message. No dedicated `senderMatch` entry added yet (exact SMS sender ID unconfirmed) — currently matched via the `GENERIC_UPI` fallback, which works correctly | Live capture, 2026-08-16 |
 | ICICI (`ICICIB`) | Grounded, not device-verified | Structure inferred from public examples in the open-source [`transaction-sms-parser`](https://github.com/saurabhgupta050890/transaction-sms-parser) library's docs |
 | SBI (`SBIINB`) | Grounded, not device-verified | Generic ATM/debit wording pattern, no bank-specific sample found |
 | Axis (`AXISB`) | Grounded, not device-verified | Same source as ICICI; listed as tested by that library |
-| Generic UPI fallback | Grounded | Combines the widened match-window fix with a real ECS-style debit sample found via the same source |
+| Generic UPI fallback | Grounded + now also verified (handles CBI correctly) | Combines the widened match-window fix with a real ECS-style debit sample found via the same source |
 
 **Known gap**: credit card "spend" notifications (e.g.
 `"Rs.2000 spent on HDFC Visa Credit Card 4321. Avbl credit limit Rs.50000."`)
@@ -304,6 +337,8 @@ access + a validation step server-side.
 - [ ] App icon / branding assets — currently using `@android:drawable/sym_def_app_icon` (a built-in system placeholder) so the build isn't blocked. Replace with real `mipmap-*dpi` assets + adaptive icon before any real device testing/release; see Decision Log 2026-08-15.
 - [ ] Handle multi-SIM / dual-SIM sender variations
 - [ ] **Remove temporary `BuildConfig.DEBUG` raw-text logging** in `NotificationCaptureService` once parser accuracy is validated across more real bank/UPI samples — see ยง8 Decision Log 2026-08-16
+- [ ] **Replace `fallbackToDestructiveMigration()` with a real Room `Migration`** before any release build — currently wipes all local data on every schema version bump (see ยง2.8)
+- [ ] Auto-detect recurring merchants/amounts to suggest reminders automatically, rather than requiring fully manual entry
 - [ ] Verify debited-side (money sent) regex against a real sample — only the credited-side has been confirmed against real data so far
 - [ ] Test additional banks/UPI apps beyond Kotak as real samples become available
 
@@ -330,6 +365,7 @@ access + a validation step server-side.
 | 2026-08-16 | Added `(?s)` DOTALL flag and made the counterparty clause fully optional in `bank_patterns.json` | Real HDFC sample was multi-line (`"Sent Rs.1.00\nFrom HDFC Bank...\nTo Mr GAURAV KUMAR"`) — `.` doesn't match `\n` by default, so the lazy `.*?` couldn't cross line breaks. Real Slice sample has no counterparty name at all (`"Received Rs. 1 on ... in your A/c ... via UPI"`), so the "from X" clause needed to become optional rather than mandatory. |
 | 2026-08-16 | **Moved direction detection out of regex-match-order and into explicit keyword search** in `TransactionParser.parse()` | Making the counterparty clause optional (previous fix) had a side effect: `debitedRegex`'s "to X" clause could spuriously match credit messages too, since "to" is a generic preposition (e.g. real HDFC sample: `"Rs.1.00 credited **to** HDFC Bank A/c..."` — "to" here refers to the account, not a debit recipient). This caused a real credited transaction to be misclassified as SENT with merchant "Unknown". Fixed by determining `Direction` first via an explicit `\b(credited|received)\b` vs `\b(debited|sent|spent|withdrawn|paid)\b` keyword check, then running only the matching regex for extraction — debit and credit paths can no longer cross-match each other. Verified against all 5 real samples collected so far (Kotak×2, HDFC×2, Slice). |
 | 2026-08-16 | Added `(` to the counterparty capture's stop-boundary lookahead | Real HDFC credit sample's counterparty is a VPA followed by `" (UPI ..."` — the `(` wasn't in the original stop-character set (`.`, `,`, `" on"`, end-of-string), so the 30-char-capped lazy capture ran out of room before finding a valid stop point and the whole optional clause failed to match, showing "Unknown" instead of the VPA. |
+| 2026-08-16 | Widened stop-boundary to include `"via"` and `"is"`, and added `"payment"` as a SENT-direction keyword | Real Central Bank of India sample (`"...credited by Rs. 1.00 on ... via UPI from Mr GAURAV KUMAR           via Ref No..."`) had extra whitespace before a `"via"` clause the old boundary didn't recognize, so counterparty capture ran past its cap — same root cause as the HDFC `(` fix, different terminator word. Separately, a real Slice sample (`"UPI payment of Rs. 1 from a/c... to GAURAV KUMAR is successful..."`) contains no debited/sent/paid/spent/withdrawn keyword at all, only "payment", so it was being classified `UNKNOWN` outright — not a boundary issue, a missing direction signal. Both fixes verified together against all 5 previously-working real samples (no regressions) plus the 2 new ones. |
 | 2026-08-16 | Added temporary `BuildConfig.DEBUG`-gated raw-text log in `NotificationCaptureService` | Needed to see real message formats to fix regex patterns, since our design intentionally never persists raw text. Gated so it can never ship in a release build (`if (BuildConfig.DEBUG)`); required adding `buildConfig true` to `buildFeatures`. Must be removed once parser accuracy is validated across more banks — tracked in Open Items. |
 
 ---

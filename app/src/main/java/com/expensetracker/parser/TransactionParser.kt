@@ -50,7 +50,7 @@ class TransactionParser(context: Context) {
         // misclassified as SENT. See REQUIREMENTS.md Decision Log 2026-08-16.
         val direction = when {
             Regex("\\b(credited|received)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.RECEIVED
-            Regex("\\b(debited|sent|spent|withdrawn|paid)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.SENT
+            Regex("\\b(debited|sent|spent|withdrawn|paid|payment)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.SENT
             else -> Direction.UNKNOWN
         }
 
@@ -74,15 +74,17 @@ class TransactionParser(context: Context) {
         val counterparty = match?.groupValues?.getOrNull(2)
 
         val amount = amountStr?.replace(",", "")?.toDoubleOrNull()
+        val trimmedCounterparty = counterparty?.trim()?.takeIf { it.isNotBlank() }
 
         // If we couldn't confidently extract an amount, still record it but
         // flag for manual review rather than silently dropping it.
         return Transaction(
             amount = amount ?: 0.0,
             direction = direction,
-            merchantOrContact = counterparty?.trim()?.takeIf { it.isNotBlank() },
+            merchantOrContact = trimmedCounterparty,
             bankOrSource = sender,
             timestampMillis = timestampMillis,
+            category = Categorizer.categorize(trimmedCounterparty, text).name,
             rawTextHash = hash,
             needsReview = amount == null || direction == Direction.UNKNOWN
         )
