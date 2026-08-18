@@ -377,3 +377,10 @@ permission, or resolves/adds an Open Item should update the relevant section
 above **in the same commit**. Treat this file as the single source of truth
 above code comments — code comments should point back here (`see
 REQUIREMENTS.md ยงX`) rather than duplicating the reasoning.
+
+
+adb shell pidof -s com.expensetracker
+adb logcat --pid=<new_pid>
+
+
+adb install -r app-debug.apk

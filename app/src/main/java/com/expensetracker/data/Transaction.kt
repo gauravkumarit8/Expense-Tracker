@@ -2,7 +2,9 @@ package com.expensetracker.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
+@Serializable
 enum class Direction { SENT, RECEIVED, UNKNOWN }
 
 /**
@@ -15,6 +17,7 @@ enum class Direction { SENT, RECEIVED, UNKNOWN }
  * same message if both the notification listener and SMS receiver fire for
  * it) and is a one-way hash, not reversible to the original text.
  */
+@Serializable
 @Entity(tableName = "transactions")
 data class Transaction(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

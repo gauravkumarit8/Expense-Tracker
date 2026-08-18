@@ -19,6 +19,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY timestampMillis DESC")
     fun getAll(): Flow<List<Transaction>>
 
+    @Query("SELECT * FROM transactions")
+    suspend fun getAllOnce(): List<Transaction>
+
     @Query("SELECT * FROM transactions WHERE needsReview = 1 ORDER BY timestampMillis DESC")
     fun getNeedsReview(): Flow<List<Transaction>>
 

@@ -4,21 +4,69 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import com.expensetracker.util.KeystoreHelper
 
-@Database(entities = [Transaction::class, Reminder::class], version = 2, exportSchema = false)
+@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
     abstract fun reminderDao(): ReminderDao
+    abstract fun budgetDao(): BudgetDao
 
     companion object {
         private const val DB_NAME = "expense_tracker_encrypted.db"
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        /**
+         * v1 -> v2: added `note` and `tags` columns to `transactions`, and
+         * added the `reminders` table (categories feature). Preserves all
+         * existing rows instead of wiping them.
+         *
+         * IMPORTANT: every future schema change MUST add its own explicit
+         * Migration here. There is no `fallbackToDestructiveMigration()`
+         * fallback anymore — a missing migration will now throw a crash
+         * (IllegalStateException) during development instead of silently
+         * deleting user data, which is the safer failure mode. See
+         * REQUIREMENTS.md Decision Log 2026-08-16 for why this changed.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN note TEXT")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN tags TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS reminders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT NOT NULL,
+                        amount REAL,
+                        dueDayOfMonth INTEGER NOT NULL,
+                        notes TEXT,
+                        lastNotifiedYearMonth TEXT
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /** v2 -> v3: added the `budgets` table (per-category monthly limits). */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS budgets (
+                        category TEXT PRIMARY KEY NOT NULL,
+                        monthlyLimit REAL NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -35,7 +83,7 @@ abstract class AppDatabase : RoomDatabase() {
 
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .fallbackToDestructiveMigration() // acceptable pre-v1; replace with real migrations post-launch
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
         }
     }
