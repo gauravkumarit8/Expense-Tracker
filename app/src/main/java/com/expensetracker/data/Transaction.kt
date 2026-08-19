@@ -29,6 +29,7 @@ data class Transaction(
     val category: String? = null,     // Category enum name; auto-assigned at insert, user-overridable
     val note: String? = null,         // free-text note, user-entered only
     val tags: String? = null,         // comma-separated tags, user-entered only
+    val balanceAfter: Double? = null, // account balance after this transaction, if the SMS/notification included it (e.g. "Avl Bal Rs.X"); null if not present in the message
     val rawTextHash: String,          // SHA-256 of original text, for dedup only
     val needsReview: Boolean = false  // true if parser had low confidence
 )

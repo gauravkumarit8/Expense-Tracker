@@ -2,24 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- TEMPORARILY DISABLED FOR LOCAL DEV/TESTING — see REQUIREMENTS.md
-         "Dev Mode: SMS Fallback Disabled". Google Play Protect blocks
-         sideloaded (non-Play-Store) APKs that request RECEIVE_SMS/READ_SMS,
-         since this exact permission combination matches banking-fraud
-         malware patterns. The NotificationListenerService below is our
-         PRIMARY capture path and does not need these permissions at all, so
-         disabling this fallback path unblocks local sideload testing.
-         Re-enable both lines below (and the <receiver> block further down)
-         once building a signed release build or distributing via Play
-         Store, where this friction doesn't apply.
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.READ_SMS" />
-    -->
+    <!-- SMS permissions (RECEIVE_SMS/READ_SMS) are permanently NOT used.
+         Google's SMS and Call Log Permissions policy restricts these to
+         apps that are the user's default SMS/Phone/Assistant handler — an
+         expense tracker does not qualify, and Play Console review flags
+         even inert/commented manifest declarations of these permissions.
+         NotificationListenerService below is the sole, sufficient capture
+         path (verified against 7+ real bank/UPI message formats — see
+         REQUIREMENTS.md ยง3 and ยง6). Do not re-add these permissions or a
+         SmsReceiver for a Play Store-distributed build. -->
 
     <!-- Needed so the listener service survives OEM aggressive battery killers -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Required on Android 13+ to show bill/subscription reminder notifications -->
+    <!-- Required on Android 13+ to show bill/subscription reminder and unusual-spend notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- No INTERNET permission requested on purpose: this app is on-device only.
@@ -47,8 +43,11 @@
             </intent-filter>
         </activity>
 
-        <!-- PRIMARY capture path: reads notification text from banking/UPI/SMS apps.
-             Requires user to grant special "Notification access" in Settings. -->
+        <!-- Sole transaction-capture path: reads notification text from
+             banking/UPI/SMS apps. Requires user to grant special
+             "Notification access" in Settings — see REQUIREMENTS.md ยง3.5
+             for the Play Console Permissions Declaration Form requirement
+             this triggers. -->
         <service
             android:name=".listener.NotificationCaptureService"
             android:exported="false"
@@ -58,25 +57,6 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-
-        <!-- FALLBACK capture path: raw SMS broadcast, for messages that never
-             surface as a notification on some OEM/dual-SIM configurations.
-             TEMPORARILY DISABLED — see the permission comment above and
-             REQUIREMENTS.md "Dev Mode: SMS Fallback Disabled". Registering
-             this receiver requires RECEIVE_SMS/READ_SMS, which are commented
-             out above, so this block is commented out too to keep them in
-             sync — an uncommented receiver with no granted permission would
-             just fail silently at runtime, which is worse than leaving it
-             fully out until both are re-enabled together.
-        <receiver
-            android:name=".receiver.SmsReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter android:priority="999">
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
-            </intent-filter>
-        </receiver>
-        -->
 
     </application>
 </manifest>

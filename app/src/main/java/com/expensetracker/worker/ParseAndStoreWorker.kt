@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.expensetracker.data.AppDatabase
 import com.expensetracker.parser.TransactionParser
+import com.expensetracker.util.UnusualSpendDetector
 
 /**
  * Runs off the main/callback thread. Parses the raw text, discards it, and
@@ -33,7 +34,10 @@ class ParseAndStoreWorker(
 
         val dao = AppDatabase.getInstance(applicationContext).transactionDao()
         if (dao.existsByHash(transaction.rawTextHash) == 0) {
-            dao.insert(transaction)
+            val insertedId = dao.insert(transaction)
+            if (insertedId > 0) {
+                UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = insertedId))
+            }
         }
         // `text` and `sender` local vars go out of scope here and are not
         // referenced anywhere else — nothing raw is written to logs or disk.

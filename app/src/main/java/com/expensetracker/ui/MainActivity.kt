@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package com.expensetracker.ui
 
@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LifecycleStartEffect
+import com.expensetracker.backup.BackupPayload
+import com.expensetracker.backup.BackupSerializer
 import com.expensetracker.data.AppDatabase
 import com.expensetracker.data.Budget
 import com.expensetracker.data.BudgetDao
@@ -45,11 +47,10 @@ import com.expensetracker.data.ReminderDao
 import com.expensetracker.data.Transaction
 import com.expensetracker.data.TransactionDao
 import com.expensetracker.util.NotificationAccessHelper
+import com.expensetracker.util.DismissedSuggestionsStore
+import com.expensetracker.util.RecurringDetector
+import com.expensetracker.util.RecurringSuggestion
 import kotlinx.coroutines.launch
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import com.expensetracker.backup.BackupPayload
-import com.expensetracker.backup.BackupSerializer
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
@@ -203,14 +204,22 @@ class MainActivity : ComponentActivity() {
                             )
                             Screen.CHARTS -> ChartsScreen(allTransactions)
                             Screen.BUDGETS -> BudgetsScreen(budgetDao, allTransactions)
-                            Screen.REMINDERS -> RemindersScreen(reminderDao)
+                            Screen.REMINDERS -> RemindersScreen(reminderDao, allTransactions)
                         }
                     }
 
                     if (showManualEntry) {
                         ManualEntryDialog(
                             onDismiss = { showManualEntry = false },
-                            onSave = { tx -> scope.launch { transactionDao.insert(tx) }; showManualEntry = false }
+                            onSave = { tx ->
+                                scope.launch {
+                                    val id = transactionDao.insert(tx)
+                                    if (id > 0) {
+                                        com.expensetracker.util.UnusualSpendDetector.checkAndNotify(context, transactionDao, tx.copy(id = id))
+                                    }
+                                }
+                                showManualEntry = false
+                            }
                         )
                     }
                     if (showAddReminder) {
@@ -258,7 +267,12 @@ private fun TransactionsScreen(
     var customFrom by rememberSaveable { mutableStateOf<Long?>(null) }
     var customTo by rememberSaveable { mutableStateOf<Long?>(null) }
     var showDateRangeDialog by remember { mutableStateOf(false) }
+    var showFilterSheet by remember { mutableStateOf(false) }
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+
+    val activeFilterCount = (if (directionFilter != DirectionFilter.ALL) 1 else 0) +
+        (if (dateFilter != DateFilter.ALL_TIME) 1 else 0) +
+        (if (categoryFilter != null) 1 else 0)
 
     val filtered = remember(allTransactions, searchQuery, directionFilter, dateFilter, categoryFilter, customFrom, customTo, sortOption) {
         val base = filterTransactions(allTransactions, searchQuery, directionFilter, dateFilter, categoryFilter, customFrom, customTo)
@@ -269,6 +283,11 @@ private fun TransactionsScreen(
             SortOption.AMOUNT_LOW -> base.sortedBy { it.amount }
         }
     }
+
+    fun clearDirection() { directionFilter = DirectionFilter.ALL }
+    fun clearDate() { dateFilter = DateFilter.ALL_TIME; customFrom = null; customTo = null }
+    fun clearCategory() { categoryFilter = null }
+    fun clearAllFilters() { clearDirection(); clearDate(); clearCategory() }
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (!notificationAccessGranted) {
@@ -285,38 +304,22 @@ private fun TransactionsScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { showDateRangeDialog = true }) {
-                        Icon(Icons.Filled.DateRange, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            if (dateFilter == DateFilter.CUSTOM && customFrom != null && customTo != null)
-                                "${shortDate(customFrom!!)} - ${shortDate(customTo!!)}"
-                            else "Pick date range"
-                        )
-                    }
-                    if (dateFilter == DateFilter.CUSTOM) {
-                        IconButton(
-                            onClick = { dateFilter = DateFilter.ALL_TIME; customFrom = null; customTo = null },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear date range", modifier = Modifier.size(16.dp))
-                        }
-                    }
+                OutlinedButton(onClick = { showFilterSheet = true }) {
+                    Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters")
                 }
                 SortMenu(sortOption) { sortOption = it }
             }
 
-            FilterChipsRow(DirectionFilter.entries, directionFilter, { it.label }) { directionFilter = it }
-            FilterChipsRow(DateFilter.entries, dateFilter, { it.label }) {
-                if (it == DateFilter.CUSTOM) {
-                    showDateRangeDialog = true
-                } else {
-                    dateFilter = it
-                    customFrom = null; customTo = null
-                }
+            if (activeFilterCount > 0) {
+                ActiveFiltersRow(
+                    directionFilter = directionFilter, onClearDirection = ::clearDirection,
+                    dateFilter = dateFilter, customFrom = customFrom, customTo = customTo, onClearDate = ::clearDate,
+                    categoryFilter = categoryFilter, onClearCategory = ::clearCategory,
+                    onClearAll = ::clearAllFilters
+                )
             }
-            CategoryFilterRow(categoryFilter) { categoryFilter = it }
 
             if (filtered.isEmpty()) {
                 NoResultsState()
@@ -330,6 +333,18 @@ private fun TransactionsScreen(
                 TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
             }
         }
+    }
+
+    if (showFilterSheet) {
+        FilterBottomSheet(
+            directionFilter = directionFilter, onDirectionChange = { directionFilter = it },
+            dateFilter = dateFilter, customFrom = customFrom, customTo = customTo,
+            onDateChange = { dateFilter = it; if (it != DateFilter.CUSTOM) { customFrom = null; customTo = null } },
+            onPickCustomRange = { showDateRangeDialog = true },
+            categoryFilter = categoryFilter, onCategoryChange = { categoryFilter = it },
+            onClearAll = ::clearAllFilters,
+            onDismiss = { showFilterSheet = false }
+        )
     }
 
     if (showDateRangeDialog) {
@@ -349,7 +364,8 @@ private fun TransactionsScreen(
         TransactionDetailDialog(
             transaction = tx,
             onDismiss = { selectedTransaction = null },
-            onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null }
+            onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null },
+            onDelete = { scope.launch { transactionDao.delete(tx.id) }; selectedTransaction = null }
         )
     }
 }
@@ -447,20 +463,95 @@ private fun SortMenu(selected: SortOption, onSelect: (SortOption) -> Unit) {
 }
 
 @Composable
-private fun <T> FilterChipsRow(options: List<T>, selected: T, labelOf: (T) -> String, onSelect: (T) -> Unit) {
+private fun ActiveFiltersRow(
+    directionFilter: DirectionFilter, onClearDirection: () -> Unit,
+    dateFilter: DateFilter, customFrom: Long?, customTo: Long?, onClearDate: () -> Unit,
+    categoryFilter: Category?, onClearCategory: () -> Unit,
+    onClearAll: () -> Unit
+) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
-        items(options) { option ->
-            FilterChip(selected = option == selected, onClick = { onSelect(option) }, label = { Text(labelOf(option)) })
+        if (directionFilter != DirectionFilter.ALL) {
+            item { RemovableChip(directionFilter.label, onClearDirection) }
+        }
+        if (dateFilter != DateFilter.ALL_TIME) {
+            val label = if (dateFilter == DateFilter.CUSTOM && customFrom != null && customTo != null)
+                "${shortDate(customFrom)} - ${shortDate(customTo)}" else dateFilter.label
+            item { RemovableChip(label, onClearDate) }
+        }
+        if (categoryFilter != null) {
+            item { RemovableChip("${categoryFilter.emoji} ${categoryFilter.label}", onClearCategory) }
+        }
+        item {
+            AssistChip(
+                onClick = onClearAll, label = { Text("Clear all") },
+                leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp)) }
+            )
         }
     }
 }
 
 @Composable
-private fun CategoryFilterRow(selected: Category?, onSelect: (Category?) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
-        item { FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text("All categories") }) }
-        items(Category.entries) { cat ->
-            FilterChip(selected = selected == cat, onClick = { onSelect(cat) }, label = { Text("${cat.emoji} ${cat.label}") })
+private fun RemovableChip(label: String, onRemove: () -> Unit) {
+    InputChip(
+        selected = true, onClick = onRemove,
+        label = { Text(label) },
+        trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove filter", modifier = Modifier.size(16.dp)) }
+    )
+}
+
+@Composable
+private fun FilterBottomSheet(
+    directionFilter: DirectionFilter, onDirectionChange: (DirectionFilter) -> Unit,
+    dateFilter: DateFilter, customFrom: Long?, customTo: Long?,
+    onDateChange: (DateFilter) -> Unit, onPickCustomRange: () -> Unit,
+    categoryFilter: Category?, onCategoryChange: (Category?) -> Unit,
+    onClearAll: () -> Unit, onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Filters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onClearAll) { Text("Clear all") }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text("Type", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowChipsRow(DirectionFilter.entries, directionFilter, { it.label }, onDirectionChange)
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Date", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowChipsRow(DateFilter.entries, dateFilter, { it.label }) {
+                if (it == DateFilter.CUSTOM) onPickCustomRange() else onDateChange(it)
+            }
+            if (dateFilter == DateFilter.CUSTOM && customFrom != null && customTo != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("${shortDate(customFrom)} - ${shortDate(customTo)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Category", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowChipsRow(
+                listOf<Category?>(null) + Category.entries,
+                categoryFilter,
+                { it?.let { c -> "${c.emoji} ${c.label}" } ?: "All categories" },
+                onCategoryChange
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Show results") }
+        }
+    }
+}
+
+@Composable
+private fun <T> FlowChipsRow(options: List<T>, selected: T, labelOf: (T) -> String, onSelect: (T) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { option ->
+            FilterChip(selected = option == selected, onClick = { onSelect(option) }, label = { Text(labelOf(option)) })
         }
     }
 }
@@ -639,19 +730,56 @@ private fun DateRangeDialog(initialFrom: Long?, initialTo: Long?, onDismiss: () 
 // ---------- TRANSACTION DETAIL / EDIT DIALOG ----------
 
 @Composable
-private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> Unit, onSave: (Transaction) -> Unit) {
+private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> Unit, onSave: (Transaction) -> Unit, onDelete: () -> Unit) {
+    val isManual = transaction.bankOrSource == "Cash"
+
+    var amountText by remember { mutableStateOf(if (isManual) "%.2f".format(transaction.amount) else "") }
+    var direction by remember { mutableStateOf(transaction.direction) }
+    var merchant by remember { mutableStateOf(transaction.merchantOrContact.orEmpty()) }
     var category by remember { mutableStateOf(Category.fromNameOrNull(transaction.category) ?: Category.OTHER) }
     var note by remember { mutableStateOf(transaction.note.orEmpty()) }
     var tags by remember { mutableStateOf(transaction.tags.orEmpty()) }
     var categoryExpanded by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+
+    if (confirmingDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmingDelete = false },
+            title = { Text("Delete this transaction?") },
+            text = { Text("This cannot be undone.") },
+            confirmButton = { TextButton(onClick = onDelete) { Text("Delete", color = Color(0xFFD32F2F)) } },
+            dismissButton = { TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") } }
+        )
+        return
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(transaction.merchantOrContact ?: "Unknown") },
         text = {
             Column {
-                Text("₹${"%.2f".format(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                Spacer(modifier = Modifier.height(16.dp))
+                if (isManual) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = direction == Direction.SENT, onClick = { direction = Direction.SENT }, label = { Text("Sent") })
+                        FilterChip(selected = direction == Direction.RECEIVED, onClick = { direction = Direction.RECEIVED }, label = { Text("Received") })
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = amountText, onValueChange = { amountText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Amount") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(value = merchant, onValueChange = { merchant = it }, label = { Text("Merchant / person") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(12.dp))
+                } else {
+                    Text("₹${"%.2f".format(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    if (transaction.balanceAfter != null) {
+                        Text("Balance after: ₹${"%.2f".format(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
                 ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = it }) {
                     OutlinedTextField(
                         value = "${category.emoji} ${category.label}", onValueChange = {}, readOnly = true,
@@ -669,12 +797,33 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                 OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("Note") }, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(value = tags, onValueChange = { tags = it }, label = { Text("Tags (comma separated)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(12.dp))
+                TextButton(onClick = { confirmingDelete = true }) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFD32F2F), modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Delete transaction", color = Color(0xFFD32F2F))
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                onSave(transaction.copy(category = category.name, note = note.trim().takeIf { it.isNotBlank() }, tags = tags.trim().takeIf { it.isNotBlank() }))
-            }) { Text("Save") }
+            TextButton(
+                onClick = {
+                    val updated = if (isManual) {
+                        transaction.copy(
+                            amount = amountText.toDoubleOrNull() ?: transaction.amount,
+                            direction = direction,
+                            merchantOrContact = merchant.trim().takeIf { it.isNotBlank() },
+                            category = category.name,
+                            note = note.trim().takeIf { it.isNotBlank() },
+                            tags = tags.trim().takeIf { it.isNotBlank() }
+                        )
+                    } else {
+                        transaction.copy(category = category.name, note = note.trim().takeIf { it.isNotBlank() }, tags = tags.trim().takeIf { it.isNotBlank() })
+                    }
+                    onSave(updated)
+                },
+                enabled = !isManual || amountText.toDoubleOrNull() != null
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -757,6 +906,17 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
         set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }.timeInMillis
 
+    // Latest known balance per bank/account source — most recent transaction
+    // (by timestamp) that happened to include a parsed balanceAfter value.
+    val latestBalances = remember(allTransactions) {
+        allTransactions
+            .filter { it.balanceAfter != null }
+            .groupBy { it.bankOrSource }
+            .mapValues { (_, txs) -> txs.maxByOrNull { it.timestampMillis }!! }
+            .toList()
+            .sortedByDescending { it.second.timestampMillis }
+    }
+
     val thisMonthSpend = remember(allTransactions) {
         allTransactions.filter { it.direction == Direction.SENT && it.timestampMillis >= startOfMonth }
     }
@@ -766,7 +926,7 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
             .toList().sortedByDescending { it.second }
     }
 
-    if (byCategory.isEmpty()) {
+    if (byCategory.isEmpty() && latestBalances.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFBDBDBD))
@@ -780,14 +940,43 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     val total = byCategory.sumOf { it.second }
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
-        item {
-            Text("This month's spending by category", style = MaterialTheme.typography.titleMedium)
-            Text("Total: ₹${"%.2f".format(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-            Spacer(modifier = Modifier.height(16.dp))
+        if (latestBalances.isNotEmpty()) {
+            item {
+                Text("Account balances", style = MaterialTheme.typography.titleMedium)
+                Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+            items(latestBalances) { (source, tx) ->
+                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
-        items(byCategory) { (category, amount) ->
-            CategoryBarRow(category, amount, total)
-            Spacer(modifier = Modifier.height(10.dp))
+
+        if (byCategory.isNotEmpty()) {
+            item {
+                Text("This month's spending by category", style = MaterialTheme.typography.titleMedium)
+                Text("Total: ₹${"%.2f".format(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            items(byCategory) { (category, amount) ->
+                CategoryBarRow(category, amount, total)
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun BalanceRow(source: String, balance: Double, asOfMillis: Long) {
+    val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+        Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text(source, fontWeight = FontWeight.Medium)
+                Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Text("₹${"%.2f".format(balance)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -915,11 +1104,18 @@ private fun EditBudgetDialog(category: Category, currentLimit: Double?, onDismis
 // ---------- REMINDERS SCREEN ----------
 
 @Composable
-private fun RemindersScreen(reminderDao: ReminderDao) {
+private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Transaction>) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val reminders by reminderDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    var dismissedVersion by remember { mutableStateOf(0) } // bump to force suggestion recompute after a dismiss
 
-    if (reminders.isEmpty()) {
+    val suggestions = remember(allTransactions, reminders, dismissedVersion) {
+        val dismissed = DismissedSuggestionsStore.getAll(context)
+        RecurringDetector.detect(allTransactions, reminders, dismissed)
+    }
+
+    if (reminders.isEmpty() && suggestions.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.NotificationsActive, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFBDBDBD))
@@ -931,7 +1127,59 @@ private fun RemindersScreen(reminderDao: ReminderDao) {
         }
     } else {
         LazyColumn(contentPadding = PaddingValues(16.dp)) {
+            if (suggestions.isNotEmpty()) {
+                item {
+                    Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                items(suggestions) { suggestion ->
+                    SuggestionRow(
+                        suggestion = suggestion,
+                        onAccept = {
+                            scope.launch {
+                                reminderDao.insert(
+                                    Reminder(
+                                        title = suggestion.merchant,
+                                        amount = suggestion.averageAmount,
+                                        dueDayOfMonth = suggestion.suggestedDueDay
+                                    )
+                                )
+                            }
+                        },
+                        onDismiss = {
+                            DismissedSuggestionsStore.dismiss(context, suggestion.merchant.trim().lowercase())
+                            dismissedVersion++
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+                if (reminders.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Your reminders", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+            }
             items(reminders) { reminder -> ReminderRow(reminder, onDelete = { scope.launch { reminderDao.delete(reminder.id) } }) }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit, onDismiss: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color(0xFFEDE7F6)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(suggestion.merchant, fontWeight = FontWeight.Medium)
+            Text(
+                "~₹${"%.2f".format(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onAccept) { Text("Add reminder") }
+                TextButton(onClick = onDismiss) { Text("Dismiss") }
+            }
         }
     }
 }

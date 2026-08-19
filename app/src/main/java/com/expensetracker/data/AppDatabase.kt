@@ -10,7 +10,7 @@ import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import com.expensetracker.util.KeystoreHelper
 
-@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 3, exportSchema = false)
+@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
@@ -68,6 +68,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 -> v4: added `balanceAfter` column to `transactions` (balance tracking feature). */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN balanceAfter REAL")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build(context).also { INSTANCE = it }
@@ -83,7 +90,7 @@ abstract class AppDatabase : RoomDatabase() {
 
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
         }
     }

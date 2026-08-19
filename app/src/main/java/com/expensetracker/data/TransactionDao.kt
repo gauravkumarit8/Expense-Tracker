@@ -16,6 +16,9 @@ interface TransactionDao {
     @Update
     suspend fun update(transaction: Transaction)
 
+    @Query("DELETE FROM transactions WHERE id = :id")
+    suspend fun delete(id: Long)
+
     @Query("SELECT * FROM transactions ORDER BY timestampMillis DESC")
     fun getAll(): Flow<List<Transaction>>
 

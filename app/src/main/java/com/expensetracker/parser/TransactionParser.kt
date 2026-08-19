@@ -76,6 +76,13 @@ class TransactionParser(context: Context) {
         val amount = amountStr?.replace(",", "")?.toDoubleOrNull()
         val trimmedCounterparty = counterparty?.trim()?.takeIf { it.isNotBlank() }
 
+        // Balance extraction is bank-agnostic (verified against real ECS and
+        // Slice samples using "Avl Bal"/"Avl. Bal." phrasing) — applied to
+        // every message rather than per-bank, since it's a single common
+        // convention across banks. Absent if the message doesn't include it.
+        val balanceMatch = safeFind(BALANCE_REGEX, text)
+        val balanceAfter = balanceMatch?.groupValues?.getOrNull(1)?.replace(",", "")?.toDoubleOrNull()
+
         // If we couldn't confidently extract an amount, still record it but
         // flag for manual review rather than silently dropping it.
         return Transaction(
@@ -85,9 +92,14 @@ class TransactionParser(context: Context) {
             bankOrSource = sender,
             timestampMillis = timestampMillis,
             category = Categorizer.categorize(trimmedCounterparty, text).name,
+            balanceAfter = balanceAfter,
             rawTextHash = hash,
             needsReview = amount == null || direction == Direction.UNKNOWN
         )
+    }
+
+    companion object {
+        private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
     }
 
     /** Runs regex.find with a hard timeout to prevent ReDoS from hanging the parser. */
