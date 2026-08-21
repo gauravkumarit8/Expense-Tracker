@@ -42,6 +42,33 @@ class TransactionParser(context: Context) {
 
         val hash = sha256(text)
 
+        // Special case: "X paid you ₹Y" phrasing (seen from GPay-style
+        // own-app notifications, as opposed to SMS bank alerts). This is
+        // RECEIVED — the generic direction-keyword check below would
+        // misclassify it as SENT purely because the word "paid" appears,
+        // without noticing "paid YOU" means the other party paid the user.
+        // Handled as its own branch because the name comes before the
+        // amount here, the reverse of every bank_patterns.json regex's
+        // (amount, then counterparty) group convention — trying to force
+        // this into the shared convention isn't worth the complexity for
+        // one phrasing. See REQUIREMENTS.md Decision Log 2026-08-20.
+        val paidYouMatch = safeFind(PAID_YOU_REGEX, text)
+        if (paidYouMatch != null) {
+            val name = paidYouMatch.groupValues.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
+            val amt = paidYouMatch.groupValues.getOrNull(2)?.replace(",", "")?.toDoubleOrNull()
+            return Transaction(
+                amount = amt ?: 0.0,
+                direction = Direction.RECEIVED,
+                merchantOrContact = name,
+                bankOrSource = "UPI", // the raw title here is the whole descriptive sentence, not a clean bank/app code — see NotificationCaptureService
+                timestampMillis = timestampMillis,
+                category = Categorizer.categorize(name, text).name,
+                balanceAfter = null,
+                rawTextHash = hash,
+                needsReview = amt == null
+            )
+        }
+
         // Determine direction FIRST from explicit keywords, independently of
         // which regex happens to match. This avoids a bug where a credit
         // message like "Rs.1.00 credited TO HDFC Bank A/c..." spuriously
@@ -100,6 +127,7 @@ class TransactionParser(context: Context) {
 
     companion object {
         private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
+        private const val PAID_YOU_REGEX = "(?i)^(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z ]{2,60}?)\\s+paid you\\s+(?:rs\\.?|inr|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
     }
 
     /** Runs regex.find with a hard timeout to prevent ReDoS from hanging the parser. */

@@ -104,6 +104,8 @@ class MainActivity : ComponentActivity() {
                 var showManualEntry by remember { mutableStateOf(false) }
                 var showAddReminder by remember { mutableStateOf(false) }
                 var showBackupDialog by remember { mutableStateOf(false) }
+                var showSettings by remember { mutableStateOf(false) }
+                androidx.activity.compose.BackHandler(enabled = showSettings) { showSettings = false }
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 val exportLauncher = rememberLauncherForActivityResult(
@@ -124,6 +126,23 @@ class MainActivity : ComponentActivity() {
                             snackbarHostState.showSnackbar("Backup saved (${payload.transactions.size} transactions)")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Export failed: ${e.message}")
+                        }
+                    }
+                }
+
+                val csvExportLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("text/csv")
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    scope.launch {
+                        try {
+                            val transactions = transactionDao.getAllOnce()
+                            context.contentResolver.openOutputStream(uri)?.use { out ->
+                                out.write(com.expensetracker.backup.CsvExporter.toCsv(transactions).toByteArray())
+                            }
+                            snackbarHostState.showSnackbar("CSV saved (${transactions.size} transactions)")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("CSV export failed: ${e.message}")
                         }
                     }
                 }
@@ -156,55 +175,88 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     topBar = {
                         TopAppBar(
-                            title = { Text(screen.label) },
+                            title = { Text(if (showSettings) "Settings" else screen.label) },
+                            navigationIcon = {
+                                if (showSettings) {
+                                    IconButton(onClick = { showSettings = false }) {
+                                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                                    }
+                                }
+                            },
                             actions = {
-                                IconButton(onClick = { showBackupDialog = true }) {
-                                    Icon(Icons.Filled.CloudSync, contentDescription = "Backup & Restore")
+                                if (!showSettings) {
+                                    IconButton(onClick = { showSettings = true }) {
+                                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                                    }
                                 }
                             }
                         )
                     },
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        NavigationBar {
-                            Screen.entries.forEach { s ->
-                                NavigationBarItem(
-                                    selected = screen == s,
-                                    onClick = {
-                                        screen = s
-                                        if (s == Screen.REMINDERS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                        }
-                                    },
-                                    icon = { Icon(s.icon, contentDescription = s.label) },
-                                    label = { Text(s.label, fontSize = 10.sp) }
-                                )
+                        if (!showSettings) {
+                            NavigationBar {
+                                Screen.entries.forEach { s ->
+                                    NavigationBarItem(
+                                        selected = screen == s,
+                                        onClick = {
+                                            screen = s
+                                            if (s == Screen.REMINDERS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                            }
+                                        },
+                                        icon = { Icon(s.icon, contentDescription = s.label) },
+                                        label = { Text(s.label, fontSize = 10.sp) }
+                                    )
+                                }
                             }
                         }
                     },
                     floatingActionButton = {
-                        when (screen) {
-                            Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
-                                Icon(Icons.Filled.Add, contentDescription = "Add cash transaction")
+                        if (!showSettings) {
+                            when (screen) {
+                                Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
+                                    Icon(Icons.Filled.Add, contentDescription = "Add cash transaction")
+                                }
+                                Screen.REMINDERS -> FloatingActionButton(onClick = { showAddReminder = true }) {
+                                    Icon(Icons.Filled.Add, contentDescription = "Add reminder")
+                                }
+                                else -> {}
                             }
-                            Screen.REMINDERS -> FloatingActionButton(onClick = { showAddReminder = true }) {
-                                Icon(Icons.Filled.Add, contentDescription = "Add reminder")
-                            }
-                            else -> {}
                         }
                     }
                 ) { padding ->
                     Surface(modifier = Modifier.fillMaxSize().padding(padding), color = Color(0xFFF7F7F9)) {
-                        when (screen) {
-                            Screen.TRANSACTIONS -> TransactionsScreen(
-                                transactionDao = transactionDao,
-                                allTransactions = allTransactions,
+                        if (showSettings) {
+                            SettingsScreen(
                                 notificationAccessGranted = notificationAccessGranted,
-                                onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) }
+                                onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
+                                onBackupRestoreClick = { showBackupDialog = true },
+                                onCsvExportClick = {
+                                    val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
+                                    csvExportLauncher.launch(filename)
+                                },
+                                onDeleteAllData = {
+                                    scope.launch {
+                                        transactionDao.deleteAll()
+                                        reminderDao.deleteAll()
+                                        budgetDao.deleteAll()
+                                        snackbarHostState.showSnackbar("All data deleted")
+                                    }
+                                }
                             )
-                            Screen.CHARTS -> ChartsScreen(allTransactions)
-                            Screen.BUDGETS -> BudgetsScreen(budgetDao, allTransactions)
-                            Screen.REMINDERS -> RemindersScreen(reminderDao, allTransactions)
+                        } else {
+                            when (screen) {
+                                Screen.TRANSACTIONS -> TransactionsScreen(
+                                    transactionDao = transactionDao,
+                                    allTransactions = allTransactions,
+                                    notificationAccessGranted = notificationAccessGranted,
+                                    onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) }
+                                )
+                                Screen.CHARTS -> ChartsScreen(allTransactions)
+                                Screen.BUDGETS -> BudgetsScreen(budgetDao, allTransactions)
+                                Screen.REMINDERS -> RemindersScreen(reminderDao, allTransactions)
+                            }
                         }
                     }
 
@@ -289,9 +341,15 @@ private fun TransactionsScreen(
     fun clearCategory() { categoryFilter = null }
     fun clearAllFilters() { clearDirection(); clearDate(); clearCategory() }
 
+    val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
+
     Column(modifier = Modifier.fillMaxSize()) {
         if (!notificationAccessGranted) {
             OnboardingBanner(onEnableClick = onEnableNotificationAccess)
+        }
+
+        if (needsReviewCount > 0 && directionFilter != DirectionFilter.NEEDS_REVIEW) {
+            NeedsReviewBanner(count = needsReviewCount, onClick = { directionFilter = DirectionFilter.NEEDS_REVIEW })
         }
 
         if (allTransactions.isEmpty()) {
@@ -557,6 +615,27 @@ private fun <T> FlowChipsRow(options: List<T>, selected: T, labelOf: (T) -> Stri
 }
 
 @Composable
+private fun NeedsReviewBanner(count: Int, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF3E0), onClick = onClick
+    ) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = Color(0xFFE65100))
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    if (count == 1) "1 transaction needs review" else "$count transactions need review",
+                    fontWeight = FontWeight.Medium
+                )
+                Text("Tap to fix amounts or directions the parser wasn't sure about", style = MaterialTheme.typography.bodySmall, color = Color(0xFF5D4037))
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color(0xFFE65100))
+        }
+    }
+}
+
+@Composable
 private fun OnboardingBanner(onEnableClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), color = Color(0xFFFFF3E0)) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -732,8 +811,13 @@ private fun DateRangeDialog(initialFrom: Long?, initialTo: Long?, onDismiss: () 
 @Composable
 private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> Unit, onSave: (Transaction) -> Unit, onDelete: () -> Unit) {
     val isManual = transaction.bankOrSource == "Cash"
+    // Needs-review transactions get full editing too (amount/direction/merchant),
+    // since that's exactly the case where the parser's guess needs correcting —
+    // unlike a confidently-parsed bank message, where amount/direction should
+    // stay tied to what the bank actually reported. See REQUIREMENTS.md ยง2.14.
+    val fullyEditable = isManual || transaction.needsReview
 
-    var amountText by remember { mutableStateOf(if (isManual) "%.2f".format(transaction.amount) else "") }
+    var amountText by remember { mutableStateOf(if (fullyEditable) "%.2f".format(transaction.amount) else "") }
     var direction by remember { mutableStateOf(transaction.direction) }
     var merchant by remember { mutableStateOf(transaction.merchantOrContact.orEmpty()) }
     var category by remember { mutableStateOf(Category.fromNameOrNull(transaction.category) ?: Category.OTHER) }
@@ -758,7 +842,20 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
         title = { Text(transaction.merchantOrContact ?: "Unknown") },
         text = {
             Column {
-                if (isManual) {
+                if (transaction.needsReview) {
+                    Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0), modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "The amount or direction couldn't be confidently parsed. Fix it below or save as-is to mark it reviewed.",
+                                style = MaterialTheme.typography.bodySmall, color = Color(0xFF5D4037)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                if (fullyEditable) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = direction == Direction.SENT, onClick = { direction = Direction.SENT }, label = { Text("Sent") })
                         FilterChip(selected = direction == Direction.RECEIVED, onClick = { direction = Direction.RECEIVED }, label = { Text("Received") })
@@ -771,15 +868,21 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(value = merchant, onValueChange = { merchant = it }, label = { Text("Merchant / person") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(12.dp))
                 } else {
                     Text("₹${"%.2f".format(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                     if (transaction.balanceAfter != null) {
                         Text("Balance after: ₹${"%.2f".format(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
+                // Merchant/counterparty display name is always editable, even
+                // for a confidently-parsed real bank transaction — it's just
+                // a display label (e.g. renaming an ugly "VPA xyz@bank" to a
+                // real name), not a financial fact, unlike amount/direction
+                // which stay locked to what the bank actually reported for
+                // non-manual, non-needsReview transactions. See ยง2.14.
+                OutlinedTextField(value = merchant, onValueChange = { merchant = it }, label = { Text("Merchant / person") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(12.dp))
                 ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = it }) {
                     OutlinedTextField(
                         value = "${category.emoji} ${category.label}", onValueChange = {}, readOnly = true,
@@ -808,22 +911,28 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
         confirmButton = {
             TextButton(
                 onClick = {
-                    val updated = if (isManual) {
+                    val updated = if (fullyEditable) {
                         transaction.copy(
                             amount = amountText.toDoubleOrNull() ?: transaction.amount,
                             direction = direction,
                             merchantOrContact = merchant.trim().takeIf { it.isNotBlank() },
                             category = category.name,
                             note = note.trim().takeIf { it.isNotBlank() },
-                            tags = tags.trim().takeIf { it.isNotBlank() }
+                            tags = tags.trim().takeIf { it.isNotBlank() },
+                            needsReview = false // user has now confirmed/corrected this, whether or not they changed the values
                         )
                     } else {
-                        transaction.copy(category = category.name, note = note.trim().takeIf { it.isNotBlank() }, tags = tags.trim().takeIf { it.isNotBlank() })
+                        transaction.copy(
+                            merchantOrContact = merchant.trim().takeIf { it.isNotBlank() },
+                            category = category.name,
+                            note = note.trim().takeIf { it.isNotBlank() },
+                            tags = tags.trim().takeIf { it.isNotBlank() }
+                        )
                     }
                     onSave(updated)
                 },
-                enabled = !isManual || amountText.toDoubleOrNull() != null
-            ) { Text("Save") }
+                enabled = !fullyEditable || amountText.toDoubleOrNull() != null
+            ) { Text(if (transaction.needsReview) "Save & mark reviewed" else "Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -1314,4 +1423,120 @@ private fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, onI
             }
         }
     )
+}
+
+// ---------- SETTINGS SCREEN ----------
+
+@Composable
+private fun SettingsScreen(
+    notificationAccessGranted: Boolean,
+    onEnableNotificationAccess: () -> Unit,
+    onBackupRestoreClick: () -> Unit,
+    onCsvExportClick: () -> Unit,
+    onDeleteAllData: () -> Unit
+) {
+    val context = LocalContext.current
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    val versionName = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
+        } catch (e: Exception) { "—" }
+    }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        item {
+            Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
+            SettingsRow(
+                icon = Icons.Filled.CloudSync,
+                title = "Backup & Restore",
+                subtitle = "Export or restore your data as a file",
+                onClick = onBackupRestoreClick
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
+            SettingsRow(
+                icon = Icons.Filled.TableChart,
+                title = "Export to CSV",
+                subtitle = "For opening in Excel, Sheets, etc. — not for restoring",
+                onClick = onCsvExportClick
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
+            SettingsRow(
+                icon = if (notificationAccessGranted) Icons.Filled.NotificationsActive else Icons.Filled.Warning,
+                title = "Notification access",
+                subtitle = if (notificationAccessGranted) "Granted — bank/UPI alerts are being captured" else "Not granted — tap to enable in Settings",
+                onClick = onEnableNotificationAccess,
+                tint = if (notificationAccessGranted) Color(0xFF2E7D32) else Color(0xFFE65100)
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        item {
+            Text("Danger zone", style = MaterialTheme.typography.labelLarge, color = Color(0xFFD32F2F))
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
+            SettingsRow(
+                icon = Icons.Filled.DeleteForever,
+                title = "Delete all data",
+                subtitle = "Permanently erases all transactions, reminders, and budgets",
+                onClick = { showDeleteConfirm = true },
+                tint = Color(0xFFD32F2F)
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        item {
+            Text("About", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Expense Tracker v$versionName", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "All data stays on this device. Nothing is transmitted to any server.",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+            )
+        }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete all data?") },
+            text = { Text("This permanently erases every transaction, reminder, and budget on this device. This cannot be undone — consider exporting a backup first.") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDeleteAllData() }) {
+                    Text("Delete everything", color = Color(0xFFD32F2F))
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    tint: Color = Color(0xFF5C6BC0)
+) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Medium)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color(0xFFBDBDBD))
+        }
+    }
 }
