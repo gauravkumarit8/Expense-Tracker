@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.expensetracker.data.AppDatabase
 import com.expensetracker.parser.TransactionParser
+import com.expensetracker.util.DuplicateDetector
 import com.expensetracker.util.UnusualSpendDetector
 
 /**
@@ -34,9 +35,18 @@ class ParseAndStoreWorker(
 
         val dao = AppDatabase.getInstance(applicationContext).transactionDao()
         if (dao.existsByHash(transaction.rawTextHash) == 0) {
-            val insertedId = dao.insert(transaction)
-            if (insertedId > 0) {
-                UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = insertedId))
+            // Exact-text dedup (above) only catches the same notification
+            // being redelivered verbatim. Cross-source duplicates — the same
+            // real payment captured via both a payment app's own
+            // notification and the bank's SMS alert — have different raw
+            // text entirely, so they need a separate, narrower check.
+            // See REQUIREMENTS.md ยง2.15.
+            val recentWindow = dao.getAllOnce().filter { kotlin.math.abs(it.timestampMillis - timestamp) <= 5 * 60_000L }
+            if (!DuplicateDetector.isLikelyDuplicate(transaction, recentWindow)) {
+                val insertedId = dao.insert(transaction)
+                if (insertedId > 0) {
+                    UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = insertedId))
+                }
             }
         }
         // `text` and `sender` local vars go out of scope here and are not
