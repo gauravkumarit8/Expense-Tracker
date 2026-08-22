@@ -5,7 +5,7 @@ package com.expensetracker.ui
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +47,8 @@ import com.expensetracker.data.ReminderDao
 import com.expensetracker.data.Transaction
 import com.expensetracker.data.TransactionDao
 import com.expensetracker.util.NotificationAccessHelper
+import com.expensetracker.util.AppLockManager
+import com.expensetracker.util.BiometricAuthHelper
 import com.expensetracker.util.DismissedSuggestionsStore
 import com.expensetracker.util.RecurringDetector
 import com.expensetracker.util.RecurringSuggestion
@@ -76,7 +78,7 @@ private enum class Screen(val label: String, val icon: androidx.compose.ui.graph
     REMINDERS("Reminders", Icons.Filled.NotificationsActive)
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = AppDatabase.getInstance(applicationContext)
@@ -88,6 +90,17 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
+
+                var appLockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
+                var isUnlocked by remember { mutableStateOf(!appLockEnabled) }
+                // Re-lock every time the app leaves the foreground (covers
+                // both "user backgrounds the app" and process death/recreate)
+                // rather than only on initial launch, so a lost/stolen
+                // unlocked phone doesn't leave financial data exposed after
+                // switching away and back.
+                LifecycleStartEffect(appLockEnabled) {
+                    onStopOrDispose { if (appLockEnabled) isUnlocked = false }
+                }
 
                 var notificationAccessGranted by remember { mutableStateOf(NotificationAccessHelper.isEnabled(context)) }
                 LifecycleStartEffect(Unit) {
@@ -172,19 +185,21 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                val isLocked = appLockEnabled && !isUnlocked
+
                 Scaffold(
                     topBar = {
                         TopAppBar(
-                            title = { Text(if (showSettings) "Settings" else screen.label) },
+                            title = { Text(if (isLocked) "Expense Tracker" else if (showSettings) "Settings" else screen.label) },
                             navigationIcon = {
-                                if (showSettings) {
+                                if (showSettings && !isLocked) {
                                     IconButton(onClick = { showSettings = false }) {
                                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                                     }
                                 }
                             },
                             actions = {
-                                if (!showSettings) {
+                                if (!showSettings && !isLocked) {
                                     IconButton(onClick = { showSettings = true }) {
                                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                                     }
@@ -194,7 +209,7 @@ class MainActivity : ComponentActivity() {
                     },
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        if (!showSettings) {
+                        if (!showSettings && !isLocked) {
                             NavigationBar {
                                 Screen.entries.forEach { s ->
                                     NavigationBarItem(
@@ -213,7 +228,7 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     floatingActionButton = {
-                        if (!showSettings) {
+                        if (!showSettings && !isLocked) {
                             when (screen) {
                                 Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
                                     Icon(Icons.Filled.Add, contentDescription = "Add cash transaction")
@@ -227,7 +242,17 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { padding ->
                     Surface(modifier = Modifier.fillMaxSize().padding(padding), color = Color(0xFFF7F7F9)) {
-                        if (showSettings) {
+                        if (isLocked) {
+                            LockScreen(
+                                onUnlockClick = {
+                                    BiometricAuthHelper.authenticate(
+                                        activity = this@MainActivity,
+                                        onSuccess = { isUnlocked = true },
+                                        onError = { /* cancelled or failed — stays locked, user can retry */ }
+                                    )
+                                }
+                            )
+                        } else if (showSettings) {
                             SettingsScreen(
                                 notificationAccessGranted = notificationAccessGranted,
                                 onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
@@ -235,6 +260,24 @@ class MainActivity : ComponentActivity() {
                                 onCsvExportClick = {
                                     val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
                                     csvExportLauncher.launch(filename)
+                                },
+                                appLockEnabled = appLockEnabled,
+                                canUseAppLock = AppLockManager.canUseAppLock(context),
+                                onAppLockToggle = { wantEnabled ->
+                                    if (wantEnabled) {
+                                        BiometricAuthHelper.authenticate(
+                                            activity = this@MainActivity,
+                                            title = "Confirm to enable App Lock",
+                                            subtitle = "Verify it's you before turning this on",
+                                            onSuccess = {
+                                                AppLockManager.setEnabled(context, true)
+                                                appLockEnabled = true
+                                            }
+                                        )
+                                    } else {
+                                        AppLockManager.setEnabled(context, false)
+                                        appLockEnabled = false
+                                    }
                                 },
                                 onDeleteAllData = {
                                     scope.launch {
@@ -1433,6 +1476,9 @@ private fun SettingsScreen(
     onEnableNotificationAccess: () -> Unit,
     onBackupRestoreClick: () -> Unit,
     onCsvExportClick: () -> Unit,
+    appLockEnabled: Boolean,
+    canUseAppLock: Boolean,
+    onAppLockToggle: (Boolean) -> Unit,
     onDeleteAllData: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1445,6 +1491,24 @@ private fun SettingsScreen(
     }
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        item {
+            Text("Security", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
+            SettingsToggleRow(
+                icon = Icons.Filled.Fingerprint,
+                title = "App lock",
+                subtitle = if (!canUseAppLock) "Set up a fingerprint, face unlock, or screen lock in your device settings first"
+                    else if (appLockEnabled) "Biometric or device PIN required to open the app"
+                    else "Require biometric or device PIN to open the app",
+                checked = appLockEnabled,
+                enabled = canUseAppLock,
+                onCheckedChange = onAppLockToggle
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
         item {
             Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
             Spacer(modifier = Modifier.height(8.dp))
@@ -1537,6 +1601,52 @@ private fun SettingsRow(
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color(0xFFBDBDBD))
+        }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = if (enabled) Color(0xFF5C6BC0) else Color(0xFFBDBDBD), modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Medium, color = if (enabled) Color.Unspecified else Color(0xFFBDBDBD))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        }
+    }
+}
+
+// ---------- APP LOCK SCREEN ----------
+
+@Composable
+private fun LockScreen(onUnlockClick: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(56.dp), tint = Color(0xFF5C6BC0))
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Expense Tracker is locked", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Verify it's you to view your transactions",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(onClick = onUnlockClick) {
+                Icon(Icons.Filled.Fingerprint, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Unlock")
+            }
         }
     }
 }

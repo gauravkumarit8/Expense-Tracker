@@ -75,6 +75,7 @@ dependencies {
 
     // Biometric app lock
     implementation "androidx.biometric:biometric:1.2.0-alpha05"
+    implementation "androidx.fragment:fragment-ktx:1.6.2"
 
     // JSON parsing for bundled bank_patterns.json
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2"
