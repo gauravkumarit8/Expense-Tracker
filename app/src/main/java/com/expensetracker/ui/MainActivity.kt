@@ -52,6 +52,10 @@ import com.expensetracker.util.BiometricAuthHelper
 import com.expensetracker.util.DismissedSuggestionsStore
 import com.expensetracker.util.RecurringDetector
 import com.expensetracker.util.RecurringSuggestion
+import com.expensetracker.ads.BannerAdView
+import com.expensetracker.billing.BillingManager
+import com.expensetracker.update.AppUpdateHelper
+import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -79,12 +83,23 @@ private enum class Screen(val label: String, val icon: androidx.compose.ui.graph
 }
 
 class MainActivity : FragmentActivity() {
+    private lateinit var billingManager: BillingManager
+    private lateinit var appUpdateHelper: AppUpdateHelper
+
+    private val updateFlowLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+    ) { /* result ignored — a cancelled/failed update flow just means the banner reappears later */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = AppDatabase.getInstance(applicationContext)
         val transactionDao = db.transactionDao()
         val reminderDao = db.reminderDao()
         val budgetDao = db.budgetDao()
+
+        billingManager = BillingManager(applicationContext)
+        billingManager.startConnection()
+        appUpdateHelper = AppUpdateHelper(this)
 
         setContent {
             MaterialTheme {
@@ -106,6 +121,28 @@ class MainActivity : FragmentActivity() {
                 LifecycleStartEffect(Unit) {
                     notificationAccessGranted = NotificationAccessHelper.isEnabled(context)
                     onStopOrDispose { }
+                }
+
+                val isPro by billingManager.isPro.collectAsStateWithLifecycle(initialValue = false)
+                val proProducts by billingManager.productDetails.collectAsStateWithLifecycle(initialValue = emptyList())
+                var showUpgradeDialog by remember { mutableStateOf(false) }
+                var pendingGatedAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+                var showUpdateBanner by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    appUpdateHelper.checkForUpdate(updateFlowLauncher, onUpdateAvailable = { showUpdateBanner = true })
+                }
+
+                /** Runs [action] immediately if Pro, otherwise shows the
+                 *  upgrade dialog and runs [action] automatically once a
+                 *  purchase succeeds. Demonstrated on CSV export as the
+                 *  reference example — see REQUIREMENTS.md ยง2.17 for which
+                 *  other features are earmarked to use this same gate. */
+                fun requirePro(action: () -> Unit) {
+                    if (isPro) action() else { pendingGatedAction = action; showUpgradeDialog = true }
+                }
+                LaunchedEffect(isPro) {
+                    if (isPro) { pendingGatedAction?.invoke(); pendingGatedAction = null; showUpgradeDialog = false }
                 }
 
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -258,9 +295,13 @@ class MainActivity : FragmentActivity() {
                                 onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
                                 onBackupRestoreClick = { showBackupDialog = true },
                                 onCsvExportClick = {
-                                    val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
-                                    csvExportLauncher.launch(filename)
+                                    requirePro {
+                                        val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
+                                        csvExportLauncher.launch(filename)
+                                    }
                                 },
+                                isPro = isPro,
+                                onUpgradeClick = { showUpgradeDialog = true },
                                 appLockEnabled = appLockEnabled,
                                 canUseAppLock = AppLockManager.canUseAppLock(context),
                                 onAppLockToggle = { wantEnabled ->
@@ -294,7 +335,8 @@ class MainActivity : FragmentActivity() {
                                     transactionDao = transactionDao,
                                     allTransactions = allTransactions,
                                     notificationAccessGranted = notificationAccessGranted,
-                                    onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) }
+                                    onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
+                                    isPro = isPro
                                 )
                                 Screen.CHARTS -> ChartsScreen(allTransactions)
                                 Screen.BUDGETS -> BudgetsScreen(budgetDao, allTransactions)
@@ -337,9 +379,34 @@ class MainActivity : FragmentActivity() {
                             }
                         )
                     }
+                    if (showUpgradeDialog) {
+                        UpgradeDialog(
+                            products = proProducts,
+                            onDismiss = { showUpgradeDialog = false; pendingGatedAction = null },
+                            onSelectProduct = { product -> billingManager.launchPurchaseFlow(this@MainActivity, product) }
+                        )
+                    }
+                    LaunchedEffect(showUpdateBanner) {
+                        if (showUpdateBanner) {
+                            snackbarHostState.showSnackbar("An update is downloading in the background")
+                            showUpdateBanner = false
+                        }
+                    }
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Completes a FLEXIBLE update that finished downloading while the
+        // app was backgrounded — a no-op if nothing is pending.
+        if (::appUpdateHelper.isInitialized) appUpdateHelper.completeUpdateIfDownloaded()
+    }
+
+    override fun onDestroy() {
+        billingManager.endConnection()
+        super.onDestroy()
     }
 }
 
@@ -350,7 +417,8 @@ private fun TransactionsScreen(
     transactionDao: TransactionDao,
     allTransactions: List<Transaction>,
     notificationAccessGranted: Boolean,
-    onEnableNotificationAccess: () -> Unit
+    onEnableNotificationAccess: () -> Unit,
+    isPro: Boolean
 ) {
     val scope = rememberCoroutineScope()
 
@@ -395,44 +463,53 @@ private fun TransactionsScreen(
             NeedsReviewBanner(count = needsReviewCount, onClick = { directionFilter = DirectionFilter.NEEDS_REVIEW })
         }
 
-        if (allTransactions.isEmpty()) {
-            EmptyState(showHint = notificationAccessGranted)
-        } else {
-            SearchBar(searchQuery) { searchQuery = it }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(onClick = { showFilterSheet = true }) {
-                    Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters")
-                }
-                SortMenu(sortOption) { sortOption = it }
-            }
-
-            if (activeFilterCount > 0) {
-                ActiveFiltersRow(
-                    directionFilter = directionFilter, onClearDirection = ::clearDirection,
-                    dateFilter = dateFilter, customFrom = customFrom, customTo = customTo, onClearDate = ::clearDate,
-                    categoryFilter = categoryFilter, onClearCategory = ::clearCategory,
-                    onClearAll = ::clearAllFilters
-                )
-            }
-
-            if (filtered.isEmpty()) {
-                NoResultsState()
+        Column(modifier = Modifier.weight(1f)) {
+            if (allTransactions.isEmpty()) {
+                EmptyState(showHint = notificationAccessGranted)
             } else {
-                SummaryHeader(
-                    transactions = filtered,
-                    directionFilter = directionFilter,
-                    onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
-                    onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
-                )
-                TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
+                SearchBar(searchQuery) { searchQuery = it }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(onClick = { showFilterSheet = true }) {
+                        Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters")
+                    }
+                    SortMenu(sortOption) { sortOption = it }
+                }
+
+                if (activeFilterCount > 0) {
+                    ActiveFiltersRow(
+                        directionFilter = directionFilter, onClearDirection = ::clearDirection,
+                        dateFilter = dateFilter, customFrom = customFrom, customTo = customTo, onClearDate = ::clearDate,
+                        categoryFilter = categoryFilter, onClearCategory = ::clearCategory,
+                        onClearAll = ::clearAllFilters
+                    )
+                }
+
+                if (filtered.isEmpty()) {
+                    NoResultsState()
+                } else {
+                    SummaryHeader(
+                        transactions = filtered,
+                        directionFilter = directionFilter,
+                        onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
+                        onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
+                    )
+                    TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
+                }
             }
+        }
+
+        // Banner ad, anchored at the bottom of the home screen, always
+        // visible regardless of scroll position or which sub-state above is
+        // showing. Free users only — see REQUIREMENTS.md ยง2.18.
+        if (!isPro) {
+            BannerAdView()
         }
     }
 
@@ -1476,6 +1553,8 @@ private fun SettingsScreen(
     onEnableNotificationAccess: () -> Unit,
     onBackupRestoreClick: () -> Unit,
     onCsvExportClick: () -> Unit,
+    isPro: Boolean,
+    onUpgradeClick: () -> Unit,
     appLockEnabled: Boolean,
     canUseAppLock: Boolean,
     onAppLockToggle: (Boolean) -> Unit,
@@ -1491,6 +1570,21 @@ private fun SettingsScreen(
     }
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        item {
+            Text("Membership", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
+            SettingsRow(
+                icon = if (isPro) Icons.Filled.WorkspacePremium else Icons.Filled.Star,
+                title = if (isPro) "Expense Tracker Pro" else "Upgrade to Pro",
+                subtitle = if (isPro) "Thanks for supporting the app!" else "CSV export and more, ad-free, no lending upsells",
+                onClick = onUpgradeClick,
+                tint = if (isPro) Color(0xFFF9A825) else Color(0xFF5C6BC0)
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
         item {
             Text("Security", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
             Spacer(modifier = Modifier.height(8.dp))
@@ -1563,9 +1657,13 @@ private fun SettingsScreen(
             Text("Expense Tracker v$versionName", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "All data stays on this device. Nothing is transmitted to any server.",
+                "Your transactions, budgets, and reminders stay on this device and are never transmitted anywhere. Subscriptions, ads, and app updates use Google's own services.",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray
             )
+            if (!isPro) {
+                Spacer(modifier = Modifier.height(20.dp))
+                BannerAdView()
+            }
         }
     }
 
@@ -1649,4 +1747,45 @@ private fun LockScreen(onUnlockClick: () -> Unit) {
             }
         }
     }
+}
+
+// ---------- UPGRADE TO PRO ----------
+
+@Composable
+private fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit, onSelectProduct: (ProductDetails) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Upgrade to Pro") },
+        text = {
+            Column {
+                Text(
+                    "Support development and unlock CSV export, with more Pro features on the way. No ads, no lending upsells, no data ever leaves your device.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                if (products.isEmpty()) {
+                    Text(
+                        "Subscription options aren't available right now. This may mean the app hasn't been published with Pro products configured yet.",
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                    )
+                } else {
+                    products.forEach { product ->
+                        val offer = product.subscriptionOfferDetails?.firstOrNull()
+                        val price = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice ?: "—"
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(12.dp), color = Color(0xFFF7F7F9),
+                            onClick = { onSelectProduct(product) }
+                        ) {
+                            Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(product.name, fontWeight = FontWeight.Medium)
+                                Text(price, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Not now") } }
+    )
 }

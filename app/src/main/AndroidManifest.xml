@@ -18,10 +18,18 @@
     <!-- Required on Android 13+ to show bill/subscription reminder and unusual-spend notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- No INTERNET permission requested on purpose: this app is on-device only.
-         Do not add android.permission.INTERNET unless a feature genuinely requires
-         network access — its absence is itself a strong privacy/security signal
-         for Play Store review and for users. -->
+    <!-- INTERNET permission — added 2026-08-20, the first exception to this
+         app's previously-total on-device-only design. Scoped to three uses,
+         all talking to Google's own servers, never a backend of ours:
+         (1) Play Billing Library, for subscription purchase/status checks;
+         (2) Play Core In-App Update API, for update-availability checks;
+         (3) Google Mobile Ads (AdMob), for banner ads shown to free-tier
+         users only (hidden for Pro subscribers). No custom server exists
+         for this app and none is planned — all financial transaction data
+         still never leaves the device either way. See REQUIREMENTS.md
+         ยง2.17 and ยง2.18 for the full architecture decisions and Data
+         Safety form implications this has. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:name=".ExpenseTrackerApp"
@@ -33,6 +41,18 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         tools:targetApi="31">
+
+        <!-- AdMob App ID — this is GOOGLE'S OFFICIAL TEST APP ID
+             (ca-app-pub-3940256099942544~3347511713), safe to ship in
+             debug builds and guaranteed to only ever serve test ads.
+             MUST be replaced with a real App ID from your own AdMob
+             account (Apps > [your app] > App settings) before any
+             release build — shipping the test ID in a release build
+             means zero ad revenue, not a crash, but it must be fixed.
+             See REQUIREMENTS.md ยง2.18. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713" />
 
         <activity
             android:name=".ui.MainActivity"

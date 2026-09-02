@@ -663,6 +663,8 @@ above **in the same commit**. Treat this file as the single source of truth
 above code comments — code comments should point back here (`see
 REQUIREMENTS.md ยงX`) rather than duplicating the reasoning.
 
+To download the app
+python3 -m http.server 8000 --directory app/build/outputs/apk/debug
 
 adb shell pidof -s com.expensetracker
 adb logcat --pid=<new_pid>

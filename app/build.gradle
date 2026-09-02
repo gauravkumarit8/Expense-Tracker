@@ -3,16 +3,17 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'kotlin-kapt'
     id 'org.jetbrains.kotlin.plugin.serialization'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android {
     namespace 'com.expensetracker'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId "com.expensetracker"
         minSdk 24
-        targetSdk 34
+        targetSdk 35
         versionCode 1
         versionName "0.1.0"
     }
@@ -40,9 +41,10 @@ android {
         compose true
         buildConfig true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion '1.5.8'
-    }
+    // composeOptions { kotlinCompilerExtensionVersion } removed — since
+    // Kotlin 2.0, the Compose compiler plugin (applied above) determines
+    // its own version from the Kotlin version directly. Setting this
+    // manually alongside the new plugin would conflict.
 
     // Financial data: never auto-backup the DB. See REQUIREMENTS.md security section.
     // dataExtractionRules / fullBackupContent referenced in AndroidManifest.
@@ -61,9 +63,9 @@ dependencies {
     implementation "androidx.compose.material:material-icons-extended"
 
     // Room + SQLCipher (encrypted local DB)
-    implementation "androidx.room:room-runtime:2.6.1"
-    implementation "androidx.room:room-ktx:2.6.1"
-    kapt "androidx.room:room-compiler:2.6.1"
+    implementation "androidx.room:room-runtime:2.8.4"
+    implementation "androidx.room:room-ktx:2.8.4"
+    kapt "androidx.room:room-compiler:2.8.4"
     implementation "net.zetetic:android-database-sqlcipher:4.5.4"
     implementation "androidx.sqlite:sqlite:2.4.0"
 
@@ -76,6 +78,21 @@ dependencies {
     // Biometric app lock
     implementation "androidx.biometric:biometric:1.2.0-alpha05"
     implementation "androidx.fragment:fragment-ktx:1.6.2"
+
+    // Play Billing (subscriptions) — client-side entitlement checking only,
+    // no backend of ours involved. See REQUIREMENTS.md ยง2.17 for the
+    // architecture decision this represents (first INTERNET permission use).
+    implementation "com.android.billingclient:billing-ktx:9.0.0"
+
+    // Play Core In-App Update — lets the app prompt for updates using
+    // Google's own Play Store data, no backend of ours needed.
+    implementation "com.google.android.play:app-update-ktx:2.1.0"
+
+    // Google Mobile Ads (AdMob) — banner ads for free-tier users, hidden
+    // for Pro subscribers. Using the mature "Legacy" SDK deliberately, not
+    // the new "Next-Gen" SDK (announced July 2026, different API shape) —
+    // see REQUIREMENTS.md ยง2.18 for why.
+    implementation "com.google.android.gms:play-services-ads:23.6.0"
 
     // JSON parsing for bundled bank_patterns.json
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2"
