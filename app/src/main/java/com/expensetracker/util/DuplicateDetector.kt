@@ -28,15 +28,28 @@ import kotlin.math.abs
  * See REQUIREMENTS.md ยง2.15 for the full reasoning and the alternative
  * (narrowing notification-source capture) that was considered and not
  * chosen, to preserve coverage for wallet-only payments with no bank SMS.
+ *
+ * Order-independence note (ยง2.15 amendment, 2026-09-02): this matching
+ * logic was already order-independent — it looks for *any* existing row
+ * matching the criteria below regardless of which `bankOrSource` arrived
+ * first. The bug that caused duplicates to still appear in practice was a
+ * check-then-insert race condition in the caller
+ * (`TransactionDao.insertIfNotDuplicate`), not an ordering assumption here.
  */
 object DuplicateDetector {
 
     private const val WINDOW_MILLIS = 90_000L // 90 seconds
 
-    fun isLikelyDuplicate(candidate: Transaction, existing: List<Transaction>): Boolean {
-        if (candidate.bankOrSource == "Cash") return false
+    /**
+     * Returns the existing transaction [candidate] is a likely cross-source
+     * duplicate of, or null if none matches. Prefer this over
+     * [isLikelyDuplicate] when the caller needs to reference *which* row was
+     * the original (e.g. for logging or returning `existingId`).
+     */
+    fun findDuplicate(candidate: Transaction, existing: List<Transaction>): Transaction? {
+        if (candidate.bankOrSource == "Cash") return null
 
-        return existing.any { other ->
+        return existing.firstOrNull { other ->
             other.bankOrSource != "Cash" &&
                 other.bankOrSource != candidate.bankOrSource &&
                 other.direction == candidate.direction &&
@@ -45,4 +58,7 @@ object DuplicateDetector {
                 other.rawTextHash != candidate.rawTextHash
         }
     }
+
+    fun isLikelyDuplicate(candidate: Transaction, existing: List<Transaction>): Boolean =
+        findDuplicate(candidate, existing) != null
 }

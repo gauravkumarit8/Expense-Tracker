@@ -4,7 +4,7 @@ Living document. Every architectural decision, tradeoff, and open question
 goes here as it's made — update this file in the same commit as the code
 change it describes.
 
-Last updated: 2026-08-15
+Last updated: 2026-09-02
 
 ---
 
@@ -307,6 +307,33 @@ edited by the user before the second (now-suppressed) copy would have
 arrived, no reconciliation happens — the first one simply stays as the
 sole record, which is the intended behavior.
 
+**AMENDED 2026-09-02 — race condition found and fixed**: despite the
+matching logic above, real screenshots this session showed cross-source
+duplicates *still* landing in the DB. Root cause was not the matching
+criteria (which were already order-independent — the check looks for
+*any* existing row with a different `bankOrSource`, not specifically
+"the SMS one" or "the UPI one"). It was a **check-then-insert race**:
+`ParseAndStoreWorker` called `dao.existsByHash(...)`, then
+`dao.getAllOnce().filter{...}` + `DuplicateDetector.isLikelyDuplicate()`,
+then `dao.insert(...)` as separate suspend calls. When the bank-SMS
+notification and the UPI-app notification for the same real payment
+arrive within milliseconds of each other, WorkManager can run both
+workers concurrently — both see "no duplicate yet" (because neither has
+inserted), and both insert.
+
+**Fix**: collapsed the check and the insert into one `@Transaction` DAO
+method, `TransactionDao.insertIfNotDuplicate()`, returning a new sealed
+`InsertOutcome` (`Inserted` / `ExactDuplicateSkipped` /
+`CrossSourceDuplicateSkipped`). Room routes `@Transaction` suspend
+functions through its internal transaction executor, which serializes
+concurrent callers against the same database — so two workers racing on
+this call can no longer both pass the check before either commits, no
+matter which side (bank SMS vs. UPI app notification) happens to arrive
+first. `ParseAndStoreWorker.doWork()` now calls this single method
+instead of the old three-call sequence. Also added
+`TransactionDao.getNearTimestamp()`, a narrow ±window query, replacing
+the previous `getAllOnce().filter{...}` full-table scan for this check.
+
 ## 2.16 App Lock (added 2026-08-20)
 
 Biometric/PIN app lock via `androidx.biometric.BiometricPrompt`, requiring
@@ -404,6 +431,111 @@ are ever found in the field, the correct fix is improving notification
 capture robustness (e.g. battery-optimization exemption prompts,
 autostart guidance), not falling back to SMS permissions the app cannot
 legitimately declare.
+
+---
+
+## 2.19 Monthly Scoping & History (added 2026-09-02)
+
+**Problem**: the Transactions (home) tab showed every transaction ever
+captured, all-time, with search/filter/sort chrome permanently docked at
+the top. As real usage accumulates this is a poor default (users care
+about "this month," not the full history at a glance) and it also crowded
+out room for the banner ad.
+
+**Fix**: `TransactionsScreen` now scopes to the **current calendar month**
+by default, filtering the existing `allTransactions` list via a new
+`MonthRange` helper (`util/MonthRange.kt`). Deliberately built on
+`java.util.Calendar`, not `java.time.YearMonth` — minSdk is 24 with no
+core library desugaring configured in `app/build.gradle`, so `java.time`
+isn't safely available on every supported device; this also matches the
+`Calendar`-based logic already in `MainActivity.filterTransactions()`.
+
+A "See all months" row opens the new **`MonthlyHistoryScreen`** (a
+full-screen overlay reached from the home tab, mirroring the existing
+`showSettings` overlay pattern rather than adding a 6th bottom-nav tab).
+It has a prev/next month stepper plus a tap-to-open month/year picker
+dialog, and a **Month vs. Year** toggle controlling whether the summary
+totals shown are scoped to just the selected month or its whole calendar
+year — the transaction list underneath always shows the selected month's
+transactions either way. The Month/Year preference is persisted via a new
+`SummaryPeriodStore` (plain `SharedPreferences`), matching the existing
+pattern for single, low-stakes UI preferences (see the 2026-08-18
+`DismissedSuggestionsStore` decision).
+
+**No schema change** — this is filtering over data already loaded via the
+existing `transactionDao.getAll()` Flow collected once in `MainActivity`;
+no new Room query, column, or migration was needed.
+
+**Deferred, not done**: no `CREATE INDEX` on `transactions.timestampMillis`
+has been added. Not needed yet since filtering happens client-side over
+data already in memory, but if a future change moves this to a DB-level
+range query (e.g. for scale), that query would want the index. Also
+deferred: `ChartsScreen` (§2.9) still has its own separate "this month
+only, no picker" limitation — it does not yet share `MonthlyHistoryScreen`'s
+month-selection state, so the app currently has two independent places a
+user might expect a month picker. Worth unifying later.
+
+## 2.20 Navigation Restructure — Search/Review Tab, Net Summary (added 2026-09-02)
+
+**Problem**: the search bar, filter chips, sort menu, and
+`NeedsReviewBanner` (§2.14) all lived permanently at the top of the
+Transactions screen, leaving no guaranteed space for the banner ad
+without it competing for room depending on scroll position and which
+sub-state (empty / no-results / populated) was showing.
+
+**Fix**: the bottom `NavigationBar` gained a 5th tab, **Search**. All of
+the search bar, filter chip row, sort menu, custom date-range dialog, and
+the needs-review banner moved off the Transactions tab entirely into a
+new `SearchReviewScreen` — reached via this tab, rather than always-docked
+at the top of the home screen. Unlike the now month-scoped home screen,
+`SearchReviewScreen` searches/filters across the **full** transaction
+history, since "search" implies more than just the current month.
+
+**Badge**: the Search tab's icon shows a Material3 `Badge` (error color,
+count text) sized to the number of `needsReview == true` transactions —
+the same count the old always-visible banner showed — via `BadgedBox`.
+Omitted entirely when the count is 0.
+
+**Net effect on the Transactions tab**: it now opens with the banner ad
+at the top (guaranteed space, no longer competing with search chrome),
+then a new `NetSummaryCard` (see below), then the day-grouped,
+current-month-only list.
+
+**Net summary card**: `NetSummaryCard` shows Sent, Received, and Net
+(received − sent) for whichever period is currently in scope — this
+month, on the home tab; the selected month or year, on
+`MonthlyHistoryScreen`. The net figure renders in green when ≥ 0 and red
+when negative, using flat semantic hex values (`#2E7D32` / `#D32F2F`)
+consistent with the green/orange/red already used for budget progress
+bars (§2.9). Deliberately non-interactive here — the old always-visible
+StatCards doubled as direction-filter toggles, but that behavior now
+belongs on `SearchReviewScreen`, where filtering is actually meaningful;
+duplicating it on the home tab's read-only summary would be confusing.
+
+## 2.21 Pro-Gating Extended to Backup & Restore + CSV Export (added 2026-09-02)
+
+**Note on doc state**: this section references `isPro` / `requirePro{}` /
+`BannerAdView` / subscription concepts that are already present in
+`MainActivity.kt` (Play Billing integration), but this file does not yet
+have the §2.17/§2.18 sections documenting that work — REQUIREMENTS.md is
+currently behind the actual code here. That documentation gap predates
+this session's changes and should be backfilled separately from whichever
+session first added Play Billing/AdMob, rather than reconstructed
+secondhand here.
+
+**Change made this session**: `Backup & Restore` and `Export to CSV` rows
+in `SettingsScreen` are now wrapped in `if (isPro) { ... }` and fully
+hidden for free-tier users, rather than always visible with CSV export as
+the sole previously-gated example. `requirePro { }` remains wired to both
+click handlers as a defensive fallback in case either is ever reached
+another way (e.g. a future deep link), even though the primary gate is
+now visibility itself.
+
+**Tradeoff, not yet resolved**: hiding entirely (rather than showing a
+grayed-out row with an upgrade prompt) was implemented per explicit
+product direction this session. It trades away a conversion-nudge
+surface for simplicity. Worth reconsidering before real launch — see
+Open Items.
 
 ---
 
@@ -620,6 +752,15 @@ access + a validation step server-side.
 - [ ] Tune unusual-spend alert thresholds (2.5x / min-3-history are untested starting guesses) once there's realistic usage volume to observe against
 - [ ] Recurring detection only matches on exact-ish merchant name (trim+lowercase) — no fuzzy matching for slightly different spellings of the same merchant across messages
 - [ ] Balance tracking shows only the single latest balance per source, no history/trend over time
+- [x] ~~Fix cross-source duplicate transactions still appearing despite ยง2.15 matching logic~~ — done 2026-09-02: root cause was a check-then-insert race, not the matching criteria; fixed via a single `@Transaction` DAO method, see ยง2.15 amendment
+- [x] ~~Restructure bottom nav to free space for the banner ad; surface needs-review count as a badge~~ — done 2026-09-02, see ยง2.20
+- [x] ~~Gate Backup & Restore + Export to CSV behind Pro subscription~~ — done 2026-09-02, see ยง2.21
+- [x] ~~Show net spent/received total, color-coded~~ — done 2026-09-02, see ยง2.20
+- [x] ~~Scope home screen to current month only; add a separate monthly-history screen with month/year picker~~ — done 2026-09-02, see ยง2.19
+- [ ] **Backfill missing ยง2.17 (Subscriptions/Play Billing) and ยง2.18 (Banner Ads) sections** — this file is currently behind the actual code, which already has `isPro`/`requirePro{}`/`BannerAdView`/Play Billing wiring undocumented here. Found while making the 2026-09-02 changes; not caused by them.
+- [ ] Add `CREATE INDEX idx_transactions_timestampMillis` if month/year filtering moves to a DB-level query and shows up as slow at realistic data volumes (currently client-side over already-loaded data, see ยง2.19)
+- [ ] Unify `ChartsScreen`'s "this month only" limitation with `MonthlyHistoryScreen`'s month-selection state instead of having two independent month concepts (see ยง2.19)
+- [ ] Decide: gray-out-with-upsell vs. full-hide for Pro-gated Settings rows (currently full-hide per explicit direction — see ยง2.21 tradeoff note)
 
 ---
 
@@ -652,6 +793,13 @@ access + a validation step server-side.
 | 2026-08-18 | Balance parsing implemented as one bank-agnostic regex rather than per-bank `bank_patterns.json` entries | Both real samples with balance info (ECS-style, Slice) use the same "Avl Bal"/"Avl. Bal." convention despite being different senders — a shared convention across banks, unlike the amount/direction wording which does vary by bank. Applying one regex to every message avoids duplicating it across every `bank_patterns.json` entry for no accuracy benefit. |
 | 2026-08-18 | Recurring-suggestion dismissals stored in SharedPreferences, not a new Room table | Deliberately lightweight for a feature this minor — avoids another schema migration for data that's inherently low-stakes (a dismissed-suggestion list) and where the underlying merchant names are already visible elsewhere in the app's unencrypted UI, so this isn't a new privacy exposure. |
 | 2026-08-18 | Unusual-spend threshold set to 2.5× category average with a minimum 3-transaction history gate | Mean-based and simple by design (no ML), consistent with the regex-based parser and Canvas-based charts elsewhere in the project. The minimum-history gate specifically prevents every category's first-ever transaction from being flagged as "unusual" relative to an undefined baseline. Thresholds are arbitrary starting points, not tuned against real usage data yet — may need adjustment once there's a realistic transaction volume to observe false-positive/negative rates against. |
+| 2026-09-02 | Fixed cross-source duplicate insertion via a single `@Transaction` DAO method instead of a coroutine `Mutex` or app-level lock | Room already serializes concurrent `@Transaction` suspend-function callers through its internal transaction executor — no new locking primitive needed. Simpler and avoids a whole class of "forgot to acquire the lock at some other call site" bugs a hand-rolled `Mutex` would risk. |
+| 2026-09-02 | Search/Filter/Sort/Needs-Review moved to a dedicated 5th nav tab rather than a top-app-bar overflow menu or bottom sheet | A persistent nav tab keeps the review-count badge always visible (parity with the previous always-visible banner), and frees the Transactions tab's top region for the banner ad without scroll-dependent show/hide logic for the search chrome. |
+| 2026-09-02 | Home screen scoped to current month by filtering the existing in-memory `allTransactions` list via `MonthRange`, rather than adding a new DB-level range query | Keeps the change low-risk — `Charts`/`Budgets`/`Reminders` already depend on the same fully-loaded `allTransactions` Flow, so introducing a second, differently-scoped Flow risked subtle inconsistencies for a first pass. Revisit as a DB query (with a supporting index) if data volume makes the client-side filter a measured problem — tracked in Open Items. |
+| 2026-09-02 | `MonthRange` built on `java.util.Calendar`, not `java.time.YearMonth` | minSdk 24 with no `coreLibraryDesugaring` configured in `app/build.gradle` means `java.time` isn't safely available on every supported device; using it would have been a build/runtime-compatibility mistake. Matches the `Calendar`-based logic already in `filterTransactions()`. |
+| 2026-09-02 | `MonthRange` implements `Serializable` | Needed for `rememberSaveable` on `MonthlyHistoryScreen`'s selected-month state — a plain Kotlin data class isn't saveable across process death/config change without this, and would throw at runtime the first time Compose tried to save it. |
+| 2026-09-02 | Monthly-vs-yearly summary preference stored in `SharedPreferences` (new `SummaryPeriodStore`), not a new Room column/table | Same reasoning as the 2026-08-18 dismissed-recurring-suggestions decision — a single low-stakes UI preference doesn't justify a schema migration. |
+| 2026-09-02 | Backup & Restore + CSV Export fully hidden (not grayed-out-with-upsell) for free-tier users | Matches explicit product direction this session. Tracked as a reconsiderable tradeoff in Open Items, since it trades a conversion-nudge opportunity for simplicity/literalness. |
 
 ---
 
@@ -662,6 +810,15 @@ permission, or resolves/adds an Open Item should update the relevant section
 above **in the same commit**. Treat this file as the single source of truth
 above code comments — code comments should point back here (`see
 REQUIREMENTS.md ยงX`) rather than duplicating the reasoning.
+
+To download the app
+python3 -m http.server 8000 --directory app/build/outputs/apk/debug
+
+adb shell pidof -s com.expensetracker
+adb logcat --pid=<new_pid>
+
+
+adb install -r app-debug.apk
 
 To download the app
 python3 -m http.server 8000 --directory app/build/outputs/apk/debug

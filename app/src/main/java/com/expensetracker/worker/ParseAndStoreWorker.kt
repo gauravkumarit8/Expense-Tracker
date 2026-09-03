@@ -1,11 +1,13 @@
 package com.expensetracker.worker
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.expensetracker.BuildConfig
 import com.expensetracker.data.AppDatabase
+import com.expensetracker.data.InsertOutcome
 import com.expensetracker.parser.TransactionParser
-import com.expensetracker.util.DuplicateDetector
 import com.expensetracker.util.UnusualSpendDetector
 
 /**
@@ -23,6 +25,7 @@ class ParseAndStoreWorker(
         const val KEY_SENDER = "sender"
         const val KEY_TEXT = "text"
         const val KEY_TIMESTAMP = "timestamp"
+        private const val TAG = "ParseAndStoreWorker"
     }
 
     override suspend fun doWork(): Result {
@@ -34,19 +37,26 @@ class ParseAndStoreWorker(
         val transaction = parser.parse(sender, text, timestamp) ?: return Result.success() // not a transaction, discard silently
 
         val dao = AppDatabase.getInstance(applicationContext).transactionDao()
-        if (dao.existsByHash(transaction.rawTextHash) == 0) {
-            // Exact-text dedup (above) only catches the same notification
-            // being redelivered verbatim. Cross-source duplicates — the same
-            // real payment captured via both a payment app's own
-            // notification and the bank's SMS alert — have different raw
-            // text entirely, so they need a separate, narrower check.
-            // See REQUIREMENTS.md ยง2.15.
-            val recentWindow = dao.getAllOnce().filter { kotlin.math.abs(it.timestampMillis - timestamp) <= 5 * 60_000L }
-            if (!DuplicateDetector.isLikelyDuplicate(transaction, recentWindow)) {
-                val insertedId = dao.insert(transaction)
-                if (insertedId > 0) {
-                    UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = insertedId))
+
+        // Exact-hash dedup and cross-source duplicate detection now happen
+        // atomically inside a single Room `@Transaction` (see
+        // TransactionDao.insertIfNotDuplicate). Previously this was two
+        // separate suspend calls (a check, then an insert), which raced when
+        // two notifications for the same real payment — e.g. a bank SMS
+        // alert and a UPI app's own notification — arrived close together:
+        // both could pass the check before either had committed. See
+        // REQUIREMENTS.md ยง2.15 amendment (2026-09-02).
+        when (val outcome = dao.insertIfNotDuplicate(transaction)) {
+            is InsertOutcome.Inserted -> {
+                if (outcome.id > 0) {
+                    UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = outcome.id))
                 }
+            }
+            is InsertOutcome.ExactDuplicateSkipped -> {
+                if (BuildConfig.DEBUG) Log.d(TAG, "Skipped exact-hash duplicate from $sender")
+            }
+            is InsertOutcome.CrossSourceDuplicateSkipped -> {
+                if (BuildConfig.DEBUG) Log.d(TAG, "Skipped cross-source duplicate of transaction #${outcome.existingId} from $sender")
             }
         }
         // `text` and `sender` local vars go out of scope here and are not

@@ -52,6 +52,9 @@ import com.expensetracker.util.BiometricAuthHelper
 import com.expensetracker.util.DismissedSuggestionsStore
 import com.expensetracker.util.RecurringDetector
 import com.expensetracker.util.RecurringSuggestion
+import com.expensetracker.util.MonthRange
+import com.expensetracker.util.SummaryPeriod
+import com.expensetracker.util.SummaryPeriodStore
 import com.expensetracker.ads.BannerAdView
 import com.expensetracker.billing.BillingManager
 import com.expensetracker.update.AppUpdateHelper
@@ -79,6 +82,12 @@ private enum class Screen(val label: String, val icon: androidx.compose.ui.graph
     TRANSACTIONS("Transactions", Icons.Filled.List),
     CHARTS("Charts", Icons.Filled.BarChart),
     BUDGETS("Budgets", Icons.Filled.PieChart),
+    // Search/Filter/Sort/Needs-Review moved here from the top of the
+    // Transactions screen (REQUIREMENTS.md ยง2.20) — frees that screen's top
+    // region for the banner ad and a month-scoped summary instead of
+    // permanently-docked search chrome. Badge count shown on this tab's icon
+    // mirrors the needs-review count.
+    SEARCH("Search", Icons.Filled.Search),
     REMINDERS("Reminders", Icons.Filled.NotificationsActive)
 }
 
@@ -151,11 +160,19 @@ class MainActivity : FragmentActivity() {
 
                 var screen by rememberSaveable { mutableStateOf(Screen.TRANSACTIONS) }
                 val allTransactions by transactionDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+                // Drives the red badge on the Search tab (REQUIREMENTS.md ยง2.20)
+                // — same count the old top-of-screen NeedsReviewBanner showed.
+                val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
                 var showManualEntry by remember { mutableStateOf(false) }
                 var showAddReminder by remember { mutableStateOf(false) }
                 var showBackupDialog by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
+                // Full-screen overlay reached from "See all months" on the
+                // Transactions tab — mirrors the existing showSettings pattern
+                // rather than adding a 6th bottom-nav tab. See ยง2.19.
+                var showMonthlyHistory by remember { mutableStateOf(false) }
                 androidx.activity.compose.BackHandler(enabled = showSettings) { showSettings = false }
+                androidx.activity.compose.BackHandler(enabled = showMonthlyHistory) { showMonthlyHistory = false }
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 val exportLauncher = rememberLauncherForActivityResult(
@@ -227,16 +244,25 @@ class MainActivity : FragmentActivity() {
                 Scaffold(
                     topBar = {
                         TopAppBar(
-                            title = { Text(if (isLocked) "Expense Tracker" else if (showSettings) "Settings" else screen.label) },
+                            title = {
+                                Text(
+                                    when {
+                                        isLocked -> "Expense Tracker"
+                                        showSettings -> "Settings"
+                                        showMonthlyHistory -> "Monthly History"
+                                        else -> screen.label
+                                    }
+                                )
+                            },
                             navigationIcon = {
-                                if (showSettings && !isLocked) {
-                                    IconButton(onClick = { showSettings = false }) {
+                                if (!isLocked && (showSettings || showMonthlyHistory)) {
+                                    IconButton(onClick = { showSettings = false; showMonthlyHistory = false }) {
                                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                                     }
                                 }
                             },
                             actions = {
-                                if (!showSettings && !isLocked) {
+                                if (!isLocked && !showSettings && !showMonthlyHistory) {
                                     IconButton(onClick = { showSettings = true }) {
                                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                                     }
@@ -246,7 +272,7 @@ class MainActivity : FragmentActivity() {
                     },
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        if (!showSettings && !isLocked) {
+                        if (!showSettings && !showMonthlyHistory && !isLocked) {
                             NavigationBar {
                                 Screen.entries.forEach { s ->
                                     NavigationBarItem(
@@ -257,7 +283,19 @@ class MainActivity : FragmentActivity() {
                                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                             }
                                         },
-                                        icon = { Icon(s.icon, contentDescription = s.label) },
+                                        icon = {
+                                            if (s == Screen.SEARCH && needsReviewCount > 0) {
+                                                BadgedBox(badge = {
+                                                    Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                        Text(if (needsReviewCount > 99) "99+" else "$needsReviewCount")
+                                                    }
+                                                }) {
+                                                    Icon(s.icon, contentDescription = s.label)
+                                                }
+                                            } else {
+                                                Icon(s.icon, contentDescription = s.label)
+                                            }
+                                        },
                                         label = { Text(s.label, fontSize = 10.sp) }
                                     )
                                 }
@@ -265,7 +303,7 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     floatingActionButton = {
-                        if (!showSettings && !isLocked) {
+                        if (!showSettings && !showMonthlyHistory && !isLocked) {
                             when (screen) {
                                 Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
                                     Icon(Icons.Filled.Add, contentDescription = "Add cash transaction")
@@ -293,7 +331,12 @@ class MainActivity : FragmentActivity() {
                             SettingsScreen(
                                 notificationAccessGranted = notificationAccessGranted,
                                 onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
-                                onBackupRestoreClick = { showBackupDialog = true },
+                                // Both rows are now hidden entirely for
+                                // free-tier users inside SettingsScreen (see
+                                // ยง2.17 amendment) — requirePro here is a
+                                // defensive fallback, not the primary gate,
+                                // in case either is ever reached another way.
+                                onBackupRestoreClick = { requirePro { showBackupDialog = true } },
                                 onCsvExportClick = {
                                     requirePro {
                                         val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
@@ -329,6 +372,11 @@ class MainActivity : FragmentActivity() {
                                     }
                                 }
                             )
+                        } else if (showMonthlyHistory) {
+                            MonthlyHistoryScreen(
+                                transactionDao = transactionDao,
+                                allTransactions = allTransactions
+                            )
                         } else {
                             when (screen) {
                                 Screen.TRANSACTIONS -> TransactionsScreen(
@@ -336,10 +384,15 @@ class MainActivity : FragmentActivity() {
                                     allTransactions = allTransactions,
                                     notificationAccessGranted = notificationAccessGranted,
                                     onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
-                                    isPro = isPro
+                                    isPro = isPro,
+                                    onSeeAllMonths = { showMonthlyHistory = true }
                                 )
                                 Screen.CHARTS -> ChartsScreen(allTransactions)
                                 Screen.BUDGETS -> BudgetsScreen(budgetDao, allTransactions)
+                                Screen.SEARCH -> SearchReviewScreen(
+                                    transactionDao = transactionDao,
+                                    allTransactions = allTransactions
+                                )
                                 Screen.REMINDERS -> RemindersScreen(reminderDao, allTransactions)
                             }
                         }
@@ -410,7 +463,19 @@ class MainActivity : FragmentActivity() {
     }
 }
 
-// ---------- TRANSACTIONS SCREEN ----------
+// ---------- TRANSACTIONS SCREEN (home tab) ----------
+//
+// REQUIREMENTS.md ยง2.19/ยง2.20 (2026-09-02): this screen used to show every
+// transaction ever captured, with search/filter/sort chrome permanently
+// docked at the top. It now:
+//   1. Scopes to the CURRENT MONTH only (see MonthRange) — "See all months"
+//      opens MonthlyHistoryScreen for anything older.
+//   2. Shows the banner ad at the TOP, in guaranteed space, instead of
+//      competing with search/filter UI for room.
+//   3. Shows a color-coded Net summary (green if received > sent, red
+//      otherwise) alongside Sent/Received.
+//   4. No longer owns search/filters/sort/needs-review UI at all — that all
+//      moved to SearchReviewScreen (the new "Search" bottom-nav tab).
 
 @Composable
 private fun TransactionsScreen(
@@ -418,7 +483,102 @@ private fun TransactionsScreen(
     allTransactions: List<Transaction>,
     notificationAccessGranted: Boolean,
     onEnableNotificationAccess: () -> Unit,
-    isPro: Boolean
+    isPro: Boolean,
+    onSeeAllMonths: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+
+    val currentMonth = remember { MonthRange.current() }
+    val monthTransactions = remember(allTransactions, currentMonth) {
+        allTransactions.filter { currentMonth.contains(it.timestampMillis) }
+            .sortedByDescending { it.timestampMillis }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Banner ad now anchored at the TOP of the home screen — this is the
+        // "extra space" the search/filter chrome used to occupy. Free users
+        // only — see REQUIREMENTS.md ยง2.18.
+        if (!isPro) {
+            BannerAdView()
+        }
+
+        if (!notificationAccessGranted) {
+            OnboardingBanner(onEnableClick = onEnableNotificationAccess)
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            if (allTransactions.isEmpty()) {
+                EmptyState(showHint = notificationAccessGranted)
+            } else {
+                MonthHeaderRow(monthLabel = currentMonth.label(), onSeeAllMonths = onSeeAllMonths)
+
+                if (monthTransactions.isEmpty()) {
+                    NoTransactionsThisMonthState(monthLabel = currentMonth.label(), onSeeAllMonths = onSeeAllMonths)
+                } else {
+                    NetSummaryCard(transactions = monthTransactions)
+                    TransactionList(monthTransactions, groupByDay = true, onRowClick = { selectedTransaction = it })
+                }
+            }
+        }
+    }
+
+    selectedTransaction?.let { tx ->
+        TransactionDetailDialog(
+            transaction = tx,
+            onDismiss = { selectedTransaction = null },
+            onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null },
+            onDelete = { scope.launch { transactionDao.delete(tx.id) }; selectedTransaction = null }
+        )
+    }
+}
+
+@Composable
+private fun MonthHeaderRow(monthLabel: String, onSeeAllMonths: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(monthLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        TextButton(onClick = onSeeAllMonths) {
+            Text("See all months")
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun NoTransactionsThisMonthState(monthLabel: String, onSeeAllMonths: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(40.dp), tint = Color(0xFFBDBDBD))
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("No transactions in $monthLabel", style = MaterialTheme.typography.titleSmall)
+            Spacer(modifier = Modifier.height(4.dp))
+            TextButton(onClick = onSeeAllMonths) { Text("Browse other months") }
+        }
+    }
+}
+
+private fun shortDate(millis: Long): String = SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(millis))
+
+// ---------- SEARCH / FILTER / SORT / NEEDS-REVIEW SCREEN ----------
+//
+// REQUIREMENTS.md ยง2.20 (2026-09-02): everything here used to live
+// permanently docked at the top of TransactionsScreen — the search bar,
+// filter chips, sort menu, and NeedsReviewBanner. Moved to its own
+// bottom-nav tab so the home screen's top region is free for the banner ad
+// and month summary, and so this tab's icon can carry a persistent
+// needs-review badge (see MainActivity's NavigationBar). This screen
+// searches/filters across ALL transactions (not just the current month) —
+// unlike the now month-scoped home screen, "search" implies the full
+// history by default.
+
+@Composable
+private fun SearchReviewScreen(
+    transactionDao: TransactionDao,
+    allTransactions: List<Transaction>
 ) {
     val scope = rememberCoroutineScope()
 
@@ -455,61 +615,48 @@ private fun TransactionsScreen(
     val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (!notificationAccessGranted) {
-            OnboardingBanner(onEnableClick = onEnableNotificationAccess)
-        }
-
         if (needsReviewCount > 0 && directionFilter != DirectionFilter.NEEDS_REVIEW) {
             NeedsReviewBanner(count = needsReviewCount, onClick = { directionFilter = DirectionFilter.NEEDS_REVIEW })
         }
 
-        Column(modifier = Modifier.weight(1f)) {
-            if (allTransactions.isEmpty()) {
-                EmptyState(showHint = notificationAccessGranted)
-            } else {
-                SearchBar(searchQuery) { searchQuery = it }
+        if (allTransactions.isEmpty()) {
+            EmptyState(showHint = false)
+        } else {
+            SearchBar(searchQuery) { searchQuery = it }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(onClick = { showFilterSheet = true }) {
-                        Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters")
-                    }
-                    SortMenu(sortOption) { sortOption = it }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(onClick = { showFilterSheet = true }) {
+                    Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters")
                 }
-
-                if (activeFilterCount > 0) {
-                    ActiveFiltersRow(
-                        directionFilter = directionFilter, onClearDirection = ::clearDirection,
-                        dateFilter = dateFilter, customFrom = customFrom, customTo = customTo, onClearDate = ::clearDate,
-                        categoryFilter = categoryFilter, onClearCategory = ::clearCategory,
-                        onClearAll = ::clearAllFilters
-                    )
-                }
-
-                if (filtered.isEmpty()) {
-                    NoResultsState()
-                } else {
-                    SummaryHeader(
-                        transactions = filtered,
-                        directionFilter = directionFilter,
-                        onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
-                        onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
-                    )
-                    TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
-                }
+                SortMenu(sortOption) { sortOption = it }
             }
-        }
 
-        // Banner ad, anchored at the bottom of the home screen, always
-        // visible regardless of scroll position or which sub-state above is
-        // showing. Free users only — see REQUIREMENTS.md ยง2.18.
-        if (!isPro) {
-            BannerAdView()
+            if (activeFilterCount > 0) {
+                ActiveFiltersRow(
+                    directionFilter = directionFilter, onClearDirection = ::clearDirection,
+                    dateFilter = dateFilter, customFrom = customFrom, customTo = customTo, onClearDate = ::clearDate,
+                    categoryFilter = categoryFilter, onClearCategory = ::clearCategory,
+                    onClearAll = ::clearAllFilters
+                )
+            }
+
+            if (filtered.isEmpty()) {
+                NoResultsState()
+            } else {
+                SummaryHeader(
+                    transactions = filtered,
+                    directionFilter = directionFilter,
+                    onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
+                    onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
+                )
+                TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
+            }
         }
     }
 
@@ -548,7 +695,190 @@ private fun TransactionsScreen(
     }
 }
 
-private fun shortDate(millis: Long): String = SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(millis))
+// ---------- MONTHLY HISTORY SCREEN ----------
+//
+// REQUIREMENTS.md ยง2.19 (2026-09-02): reached via "See all months" on the
+// home Transactions tab. Lets the user step through or pick any month and
+// see that month's transactions, with a Month-vs-Year toggle controlling
+// whether the summary totals are scoped to just that month or its whole
+// calendar year (list always shows the selected month's transactions
+// either way — the toggle only changes what the summary figures cover).
+
+@Composable
+private fun MonthlyHistoryScreen(
+    transactionDao: TransactionDao,
+    allTransactions: List<Transaction>
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var selectedMonth by rememberSaveable { mutableStateOf(MonthRange.current()) }
+    var period by remember { mutableStateOf(SummaryPeriodStore.get(context)) }
+    var showMonthYearDialog by remember { mutableStateOf(false) }
+    var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+
+    fun setPeriod(p: SummaryPeriod) {
+        period = p
+        SummaryPeriodStore.set(context, p)
+    }
+
+    val monthTransactions = remember(allTransactions, selectedMonth) {
+        allTransactions.filter { selectedMonth.contains(it.timestampMillis) }
+            .sortedByDescending { it.timestampMillis }
+    }
+    val periodTransactions = remember(allTransactions, selectedMonth, period) {
+        when (period) {
+            SummaryPeriod.MONTH -> monthTransactions
+            SummaryPeriod.YEAR -> allTransactions.filter { selectedMonth.isInSameYear(it.timestampMillis) }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
+                Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
+            }
+            TextButton(onClick = { showMonthYearDialog = true }) {
+                Text(selectedMonth.label(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            }
+            IconButton(
+                onClick = { selectedMonth = selectedMonth.next() },
+                enabled = !selectedMonth.isCurrentOrFuture()
+            ) {
+                Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            SegmentedPeriodToggle(period = period, onPeriodChange = ::setPeriod, yearLabel = selectedMonth.yearLabel())
+        }
+
+        if (monthTransactions.isEmpty() && periodTransactions.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
+            }
+        } else {
+            NetSummaryCard(transactions = periodTransactions)
+            if (period == SummaryPeriod.YEAR) {
+                Text(
+                    "Totals above cover all of ${selectedMonth.yearLabel()}. List below is just ${selectedMonth.label()}.",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+            if (monthTransactions.isEmpty()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
+                }
+            } else {
+                Box(modifier = Modifier.weight(1f)) {
+                    TransactionList(monthTransactions, groupByDay = true, onRowClick = { selectedTransaction = it })
+                }
+            }
+        }
+    }
+
+    if (showMonthYearDialog) {
+        MonthYearPickerDialog(
+            initial = selectedMonth,
+            onDismiss = { showMonthYearDialog = false },
+            onPick = { picked -> selectedMonth = picked; showMonthYearDialog = false }
+        )
+    }
+
+    selectedTransaction?.let { tx ->
+        TransactionDetailDialog(
+            transaction = tx,
+            onDismiss = { selectedTransaction = null },
+            onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null },
+            onDelete = { scope.launch { transactionDao.delete(tx.id) }; selectedTransaction = null }
+        )
+    }
+}
+
+@Composable
+private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (SummaryPeriod) -> Unit, yearLabel: String) {
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0xFFEDEDF2)).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        listOf(SummaryPeriod.MONTH to "This month", SummaryPeriod.YEAR to yearLabel).forEach { (p, label) ->
+            val selected = period == p
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (selected) Color.White else Color.Transparent,
+                onClick = { onPeriodChange(p) }
+            ) {
+                Text(
+                    label,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (selected) Color.Black else Color.Gray
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonthYearPickerDialog(initial: MonthRange, onDismiss: () -> Unit, onPick: (MonthRange) -> Unit) {
+    var year by remember { mutableStateOf(initial.year) }
+    // DAY_OF_MONTH is pinned to 1 before setting MONTH — otherwise, e.g. on
+    // the 31st, setting MONTH to February (28/29 days) rolls the date over
+    // into March once normalized, and the formatted label would silently
+    // shift to the wrong month.
+    val monthNames = remember {
+        (0..11).map { m ->
+            SimpleDateFormat("MMM", Locale.getDefault()).format(
+                Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.MONTH, m)
+                }.time
+            )
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pick a month") },
+        text = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { year-- }) { Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous year") }
+                    Text("$year", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    IconButton(onClick = { year++ }, enabled = year < MonthRange.current().year) {
+                        Icon(Icons.Filled.ChevronRight, contentDescription = "Next year")
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    monthNames.forEachIndexed { index, name ->
+                        val candidate = MonthRange(year, index)
+                        FilterChip(
+                            selected = candidate == initial,
+                            enabled = !candidate.isFuture(),
+                            onClick = { onPick(candidate) },
+                            label = { Text(name) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
 
 private fun filterTransactions(
     transactions: List<Transaction>,
@@ -831,6 +1161,56 @@ private fun StatCard(label: String, amount: Double, color: Color, isActive: Bool
         Column(modifier = Modifier.padding(12.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
             Text("₹${"%.2f".format(amount)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = color)
+        }
+    }
+}
+
+/**
+ * Net (received − sent) summary card, green when ≥ 0 and red when negative,
+ * alongside the existing Sent/Received breakdown. See REQUIREMENTS.md
+ * ยง2.20 (2026-09-02). Non-interactive by design here — the direction-filter
+ * toggle behavior of the old always-visible StatCards now lives on
+ * SearchReviewScreen, where filtering is actually possible.
+ */
+@Composable
+private fun NetSummaryCard(transactions: List<Transaction>) {
+    val sent = remember(transactions) { transactions.filter { it.direction == Direction.SENT }.sumOf { it.amount } }
+    val received = remember(transactions) { transactions.filter { it.direction == Direction.RECEIVED }.sumOf { it.amount } }
+    val net = received - sent
+    val netColor = if (net >= 0) Color(0xFF2E7D32) else Color(0xFFD32F2F) // green-800 / red-800
+
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = netColor.copy(alpha = 0.10f)
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                    Text(
+                        "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = netColor
+                    )
+                }
+                Icon(
+                    if (net >= 0) Icons.Filled.TrendingUp else Icons.Filled.TrendingDown,
+                    contentDescription = null,
+                    tint = netColor,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatCard("Sent", sent, Color(0xFFD32F2F), isActive = false, modifier = Modifier.weight(1f), onClick = {})
+            StatCard("Received", received, Color(0xFF2E7D32), isActive = false, modifier = Modifier.weight(1f), onClick = {})
         }
     }
 }
@@ -1607,23 +1987,31 @@ private fun SettingsScreen(
             Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
             Spacer(modifier = Modifier.height(8.dp))
         }
-        item {
-            SettingsRow(
-                icon = Icons.Filled.CloudSync,
-                title = "Backup & Restore",
-                subtitle = "Export or restore your data as a file",
-                onClick = onBackupRestoreClick
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-        item {
-            SettingsRow(
-                icon = Icons.Filled.TableChart,
-                title = "Export to CSV",
-                subtitle = "For opening in Excel, Sheets, etc. — not for restoring",
-                onClick = onCsvExportClick
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+        // Backup & Restore and CSV Export are Pro-only (REQUIREMENTS.md
+        // ยง2.17 amendment, 2026-09-02) — fully hidden for free-tier users
+        // rather than shown grayed-out with an upsell nudge. That's a
+        // deliberate simplicity tradeoff, not a limitation of the
+        // requirePro() gate itself (see the tradeoff note in the Decision
+        // Log if reconsidering a grayed-out variant later).
+        if (isPro) {
+            item {
+                SettingsRow(
+                    icon = Icons.Filled.CloudSync,
+                    title = "Backup & Restore",
+                    subtitle = "Export or restore your data as a file",
+                    onClick = onBackupRestoreClick
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Filled.TableChart,
+                    title = "Export to CSV",
+                    subtitle = "For opening in Excel, Sheets, etc. — not for restoring",
+                    onClick = onCsvExportClick
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
         item {
             SettingsRow(
