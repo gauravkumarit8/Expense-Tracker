@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -489,16 +490,39 @@ private fun TransactionsScreen(
     val scope = rememberCoroutineScope()
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
 
+    // Local Sent/Received quick-filter (2026-09-03 fix) — restores the
+    // tap-to-filter behavior the old always-visible StatCards had, which
+    // was dropped by mistake when search/filter/sort moved to the Search
+    // tab. Deliberately kept local and separate from SearchReviewScreen's
+    // own directionFilter: this one only ever toggles SENT/RECEIVED/ALL
+    // over the current month's data, never NEEDS_REVIEW, and resets each
+    // time the screen is recomposed fresh rather than persisting — quick,
+    // in-the-moment filtering, not a saved search.
+    var directionFilter by rememberSaveable { mutableStateOf(DirectionFilter.ALL) }
+
     val currentMonth = remember { MonthRange.current() }
     val monthTransactions = remember(allTransactions, currentMonth) {
         allTransactions.filter { currentMonth.contains(it.timestampMillis) }
             .sortedByDescending { it.timestampMillis }
     }
+    val displayedTransactions = remember(monthTransactions, directionFilter) {
+        when (directionFilter) {
+            DirectionFilter.SENT -> monthTransactions.filter { it.direction == Direction.SENT }
+            DirectionFilter.RECEIVED -> monthTransactions.filter { it.direction == Direction.RECEIVED }
+            else -> monthTransactions
+        }
+    }
+
+    fun toggleSent() { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT }
+    fun toggleReceived() { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Banner ad now anchored at the TOP of the home screen — this is the
-        // "extra space" the search/filter chrome used to occupy. Free users
-        // only — see REQUIREMENTS.md ยง2.18.
+        // Banner ad at the TOP — the "extra space" the search/filter chrome
+        // used to occupy (REQUIREMENTS.md ยง2.20). A second banner stays at
+        // the BOTTOM too (2026-09-03 fix, restoring what ยง2.18 originally
+        // specified) — the month-scoped list is short enough now that both
+        // fit comfortably, and there's no reason to give up that ad slot
+        // just because the top one exists. Free users only.
         if (!isPro) {
             BannerAdView()
         }
@@ -516,10 +540,23 @@ private fun TransactionsScreen(
                 if (monthTransactions.isEmpty()) {
                     NoTransactionsThisMonthState(monthLabel = currentMonth.label(), onSeeAllMonths = onSeeAllMonths)
                 } else {
-                    NetSummaryCard(transactions = monthTransactions)
-                    TransactionList(monthTransactions, groupByDay = true, onRowClick = { selectedTransaction = it })
+                    NetSummaryCard(
+                        transactions = displayedTransactions,
+                        directionFilter = directionFilter,
+                        onSentClick = ::toggleSent,
+                        onReceivedClick = ::toggleReceived
+                    )
+                    if (displayedTransactions.isEmpty()) {
+                        NoResultsState()
+                    } else {
+                        TransactionList(displayedTransactions, groupByDay = true, onRowClick = { selectedTransaction = it })
+                    }
                 }
             }
+        }
+
+        if (!isPro) {
+            BannerAdView()
         }
     }
 
@@ -716,21 +753,36 @@ private fun MonthlyHistoryScreen(
     var period by remember { mutableStateOf(SummaryPeriodStore.get(context)) }
     var showMonthYearDialog by remember { mutableStateOf(false) }
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+    // Same tap-to-filter as TransactionsScreen (2026-09-03) — kept
+    // consistent across both screens since they share NetSummaryCard.
+    var directionFilter by rememberSaveable { mutableStateOf(DirectionFilter.ALL) }
 
     fun setPeriod(p: SummaryPeriod) {
         period = p
         SummaryPeriodStore.set(context, p)
     }
+    fun toggleSent() { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT }
+    fun toggleReceived() { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
 
-    val monthTransactions = remember(allTransactions, selectedMonth) {
+    fun applyDirectionFilter(list: List<Transaction>): List<Transaction> = when (directionFilter) {
+        DirectionFilter.SENT -> list.filter { it.direction == Direction.SENT }
+        DirectionFilter.RECEIVED -> list.filter { it.direction == Direction.RECEIVED }
+        else -> list
+    }
+
+    val monthTransactionsUnfiltered = remember(allTransactions, selectedMonth) {
         allTransactions.filter { selectedMonth.contains(it.timestampMillis) }
             .sortedByDescending { it.timestampMillis }
     }
-    val periodTransactions = remember(allTransactions, selectedMonth, period) {
-        when (period) {
-            SummaryPeriod.MONTH -> monthTransactions
+    val monthTransactions = remember(monthTransactionsUnfiltered, directionFilter) {
+        applyDirectionFilter(monthTransactionsUnfiltered)
+    }
+    val periodTransactions = remember(allTransactions, selectedMonth, period, directionFilter) {
+        val base = when (period) {
+            SummaryPeriod.MONTH -> monthTransactionsUnfiltered
             SummaryPeriod.YEAR -> allTransactions.filter { selectedMonth.isInSameYear(it.timestampMillis) }
         }
+        applyDirectionFilter(base)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -760,12 +812,17 @@ private fun MonthlyHistoryScreen(
             SegmentedPeriodToggle(period = period, onPeriodChange = ::setPeriod, yearLabel = selectedMonth.yearLabel())
         }
 
-        if (monthTransactions.isEmpty() && periodTransactions.isEmpty()) {
+        if (monthTransactionsUnfiltered.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
             }
         } else {
-            NetSummaryCard(transactions = periodTransactions)
+            NetSummaryCard(
+                transactions = periodTransactions,
+                directionFilter = directionFilter,
+                onSentClick = ::toggleSent,
+                onReceivedClick = ::toggleReceived
+            )
             if (period == SummaryPeriod.YEAR) {
                 Text(
                     "Totals above cover all of ${selectedMonth.yearLabel()}. List below is just ${selectedMonth.label()}.",
@@ -775,7 +832,7 @@ private fun MonthlyHistoryScreen(
             }
             if (monthTransactions.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
+                    Text("No transactions match this filter", color = Color.Gray)
                 }
             } else {
                 Box(modifier = Modifier.weight(1f)) {
@@ -1159,59 +1216,77 @@ private fun StatCard(label: String, amount: Double, color: Color, isActive: Bool
         onClick = onClick
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
-            Text("₹${"%.2f".format(amount)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = color)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "₹${"%.2f".format(amount)}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
 
 /**
- * Net (received − sent) summary card, green when ≥ 0 and red when negative,
- * alongside the existing Sent/Received breakdown. See REQUIREMENTS.md
- * ยง2.20 (2026-09-02). Non-interactive by design here — the direction-filter
- * toggle behavior of the old always-visible StatCards now lives on
- * SearchReviewScreen, where filtering is actually possible.
+ * Net (received − sent) summary, green when ≥ 0 and red when negative,
+ * shown in a single row alongside Sent/Received (2026-09-03: previously
+ * Net was its own full-width card with Sent/Received in a second row
+ * below — collapsed to one row per feedback).
+ *
+ * Sent/Received are tap-to-filter, mirroring the old always-visible
+ * StatCards' behavior (2026-09-03 fix — this was accidentally dropped when
+ * search/filter/sort moved to the Search tab). When a filter is active,
+ * [transactions] is expected to already be pre-filtered by the caller (see
+ * TransactionsScreen/MonthlyHistoryScreen), so the Net/Sent/Received
+ * figures shown here reflect exactly what's currently filtered — e.g.
+ * tapping "Sent" shows Received as ₹0.00, matching how the equivalent
+ * filter has always behaved on SearchReviewScreen.
  */
 @Composable
-private fun NetSummaryCard(transactions: List<Transaction>) {
+private fun NetSummaryCard(
+    transactions: List<Transaction>,
+    directionFilter: DirectionFilter = DirectionFilter.ALL,
+    onSentClick: () -> Unit = {},
+    onReceivedClick: () -> Unit = {}
+) {
     val sent = remember(transactions) { transactions.filter { it.direction == Direction.SENT }.sumOf { it.amount } }
     val received = remember(transactions) { transactions.filter { it.direction == Direction.RECEIVED }.sumOf { it.amount } }
     val net = received - sent
     val netColor = if (net >= 0) Color(0xFF2E7D32) else Color(0xFFD32F2F) // green-800 / red-800
 
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = netColor.copy(alpha = 0.10f)
+            modifier = Modifier.weight(1.15f),
+            shape = RoundedCornerShape(12.dp),
+            color = netColor.copy(alpha = 0.12f)
         ) {
-            Row(
-                modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
-                    Text(
-                        "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = netColor
-                    )
-                }
-                Icon(
-                    if (net >= 0) Icons.Filled.TrendingUp else Icons.Filled.TrendingDown,
-                    contentDescription = null,
-                    tint = netColor,
-                    modifier = Modifier.size(28.dp)
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                Text(
+                    "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = netColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatCard("Sent", sent, Color(0xFFD32F2F), isActive = false, modifier = Modifier.weight(1f), onClick = {})
-            StatCard("Received", received, Color(0xFF2E7D32), isActive = false, modifier = Modifier.weight(1f), onClick = {})
-        }
+        StatCard(
+            "Sent", sent, Color(0xFFD32F2F),
+            isActive = directionFilter == DirectionFilter.SENT,
+            modifier = Modifier.weight(1f), onClick = onSentClick
+        )
+        StatCard(
+            "Received", received, Color(0xFF2E7D32),
+            isActive = directionFilter == DirectionFilter.RECEIVED,
+            modifier = Modifier.weight(1f), onClick = onReceivedClick
+        )
     }
 }
 
