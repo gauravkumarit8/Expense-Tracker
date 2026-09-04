@@ -4,7 +4,7 @@ Living document. Every architectural decision, tradeoff, and open question
 goes here as it's made — update this file in the same commit as the code
 change it describes.
 
-Last updated: 2026-09-02
+Last updated: 2026-09-04
 
 ---
 
@@ -512,6 +512,45 @@ StatCards doubled as direction-filter toggles, but that behavior now
 belongs on `SearchReviewScreen`, where filtering is actually meaningful;
 duplicating it on the home tab's read-only summary would be confusing.
 
+**AMENDED 2026-09-03**: the previous paragraph's reasoning was wrong on
+testing. Real usage showed two regressions from this session's changes:
+(1) the tap-to-filter behavior was a workflow people actually relied on,
+not redundant with the Search tab — restored as a **local** Sent/Received
+toggle on both `TransactionsScreen` and `MonthlyHistoryScreen` (separate
+state from `SearchReviewScreen`'s own filter; this one never exposes
+NEEDS_REVIEW, only ALL/SENT/RECEIVED, and doesn't persist as a saved
+search). (2) `NetSummaryCard` also moved to a **single row** (Net, Sent,
+Received side by side) instead of Net on its own row above a second
+Sent/Received row, per direct feedback. Additionally, restored a second
+`BannerAdView()` at the **bottom** of `TransactionsScreen` alongside the
+top one — moving the ad to the top for space was correct, but removing
+the bottom placement entirely wasn't asked for, and the shorter
+month-scoped list comfortably fits both now.
+
+**AMENDED AGAIN 2026-09-03 — Search reworked from a nav tab into an
+overlay**: the 5th-tab design above (this section's original "Fix")
+turned out to be the wrong shape for search. A bottom-nav tab is a
+*destination* — selecting it replaces whatever was on screen, including
+the current-month Transactions list, which people expect to still be
+there when they're done searching. Search is inherently a transient
+action, not a place to live.
+
+**New design**: `Screen` reverted to 4 entries (`TRANSACTIONS`, `CHARTS`,
+`BUDGETS`, `REMINDERS`) — no bottom-nav Search tab. A **Search icon moved
+to the top app bar**, next to the existing Settings gear icon, visible on
+every main screen. Tapping it sets a new `showSearch` boolean and renders
+`SearchReviewScreen` as a **full-screen overlay** — the same pattern
+already used for `showSettings` and `showMonthlyHistory` — with a back
+arrow (and system/gesture back, via `BackHandler`) closing it back to
+whichever screen (Transactions, Charts, Budgets, or Reminders) was
+showing underneath, unchanged. The needs-review `Badge` moved from the
+nav-bar icon to this top-bar icon, same count, same visual treatment.
+
+This also incidentally un-crowds the bottom `NavigationBar` back to 4
+items instead of 5, and matches a more common mobile pattern (search as a
+top-bar action that expands over content, e.g. Gmail/YouTube) rather than
+search as a permanent tab.
+
 ## 2.21 Pro-Gating Extended to Backup & Restore + CSV Export (added 2026-09-02)
 
 **Note on doc state**: this section references `isPro` / `requirePro{}` /
@@ -536,6 +575,133 @@ grayed-out row with an upgrade prompt) was implemented per explicit
 product direction this session. It trades away a conversion-nudge
 surface for simplicity. Worth reconsidering before real launch — see
 Open Items.
+
+## 2.22 First-Launch Onboarding / Disclosure Flow (added 2026-09-04)
+
+**Why now**: this was the first Open Item on the list ("Onboarding flow:
+explain permissions before requesting them...") and became a hard
+prerequisite once Play Store submission entered scope — Google Play's
+User Data policy requires **prominent in-app disclosure and affirmative
+consent** before an app accesses sensitive data sources like notification
+content, separate from (and in addition to) the Data Safety form and
+Privacy Policy, which describe the same thing but don't substitute for an
+actual in-app explanation shown to the user.
+
+**Implementation**: `OnboardingScreen` (`MainActivity.kt`), a fixed
+3-page flow — no pager library dependency, just a `page: OnboardingPage`
+enum and manual Next buttons, consistent with the project's general
+"avoid unfamiliar library APIs when plain Compose does the job" approach
+(see the Vico/Canvas-chart decision).
+
+1. **Welcome** — what the app does, in plain language (reads bank/UPI
+   alerts, logs them automatically).
+2. **Transparency** — the actual disclosure content: what's read (only
+   banking/UPI/messaging notifications), what's extracted (amount,
+   direction, date, merchant — nothing else), what's discarded (the raw
+   notification text, immediately), what's never done (no upload, no
+   server, no SMS permission).
+3. **Grant Notification Access** — the actual permission ask, via
+   `NotificationAccessHelper.settingsIntent()` (unchanged, pre-existing).
+   Also offers a secondary "Also check battery settings" button (see
+   below) and a **"Skip for now" path that is never a dead end** — the
+   app must remain usable via manual entry without this permission, both
+   as a matter of policy and because forcing the permission would be a
+   worse experience than the `OnboardingBanner` reminder it falls back to.
+
+**Gating**: tracked by a new `OnboardingStore` (plain `SharedPreferences`,
+same pattern as `SummaryPeriodStore`/`DismissedSuggestionsStore`) — one
+boolean, "has completed onboarding," checked in `MainActivity.onCreate`
+before the normal `Scaffold` renders at all. Deliberately tracks *having
+seen the explanation*, not *having granted the permission* — a user who
+taps "Skip for now" has still completed onboarding and won't be forced
+through the full 3-page flow again on next launch; the existing
+`OnboardingBanner` on the Transactions screen (§2.6) already handles
+follow-up reminders for anyone who skipped.
+
+**Battery settings button — deliberately NOT a direct exemption request**:
+the "Also check battery settings" button on page 3 opens the app's system
+"App info" screen (`Settings.ACTION_APPLICATION_DETAILS_SETTINGS`) via a
+new `BatteryOptimizationHelper`, rather than firing
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (the direct "exempt this app"
+system dialog). That intent requires declaring the
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission in the manifest, which
+is itself a Play Console-restricted permission needing a core-functionality
+justification (similar to exact alarms) — and battery exemption is a
+reliability nice-to-have for background capture, not something the app is
+broken without, so it doesn't clear that bar. Opening the plain App Info
+screen needs no manifest permission and no Play declaration at all, and
+still gets a motivated user to the same underlying OS setting in one more
+tap.
+
+**Not done**: OEM-specific ("allow autostart" on MIUI/ColorOS/etc.)
+guidance is still a separate, unaddressed Open Item — this onboarding flow
+covers the stock-Android permission asks only.
+
+## 2.23 UMP Consent Gathering for Ads (added 2026-09-04)
+
+**Why**: Google's EU User Consent Policy has required a certified Consent
+Management Platform (Google's own UMP SDK, in this case) since January 16,
+2024 for any app serving Google ads to EEA/UK/regulated-US-state users.
+This isn't tied to AdMob account tier or app category — it applies the
+moment the app might show a real ad to a user in those regions, and is
+separate from (in addition to) the Data Safety form, which only *discloses*
+data collection rather than gathering consent for it. Flagged as a real gap
+in ยง10.2 of this doc's research; implemented this session before real ads
+go live.
+
+**New `ads/ConsentManager.kt`** wraps the UMP SDK
+(`com.google.android.ump:user-messaging-platform:4.0.0`, a standalone
+Gradle dependency — not bundled in `play-services-ads` despite both being
+Google ad libraries):
+
+- `gatherConsent(activity, onCanRequestAdsChanged)` — calls
+  `requestConsentInfoUpdate()`, then `loadAndShowConsentFormIfRequired()`
+  if a form is actually needed for this user's region, then initializes
+  the Mobile Ads SDK exactly once, only after `canRequestAds()` is true.
+  A UMP network failure falls back to whatever consent status is cached
+  from a prior session rather than blocking the app indefinitely.
+- `isPrivacyOptionsRequired()` / `showPrivacyOptionsForm()` — GDPR requires
+  consent be *revocable*, not just gatherable once at first launch, so an
+  always-available entry point is required for users in regions where this
+  applies.
+
+**Moved: `MobileAds.initialize()` out of `ExpenseTrackerApp.onCreate`**,
+where it previously ran unconditionally, into `ConsentManager`, called
+from `MainActivity.onCreate`. This wasn't optional refactoring —
+`requestConsentInfoUpdate()` requires an `Activity`, not just an
+Application `Context`, so the consent-gathering step could never have
+lived in the `Application` class to begin with.
+
+**New `MainActivity` state**: `canRequestAds` and `privacyOptionsRequired`,
+both plain `by mutableStateOf(false)` properties on the Activity (not
+declared inside `setContent`) — `ConsentManager`'s callback fires
+asynchronously, independent of any single composition, so it needs a
+stable place to write to that Compose will still observe correctly.
+
+**All three `BannerAdView()` call sites** (top and bottom of
+`TransactionsScreen`, and the one in `SettingsScreen`) gated on
+`!isPro && canRequestAds` instead of just `!isPro` — no ad request, real
+or test, fires before consent is resolved where required.
+
+**New Settings row**: "Privacy & Ad Consent," shown only when
+`privacyOptionsRequired` is true, re-opens the consent form via
+`showPrivacyOptionsForm()` and re-resolves `canRequestAds` afterward in
+case the user changed their choice.
+
+**Debug testing support, gated behind `BuildConfig.DEBUG`**: a commented
+template for `ConsentDebugSettings` (test device hash + forced EEA
+geography) is included inline in `ConsentManager.gatherConsent()` with
+instructions for finding your own device's test hash via logcat — never
+active in a release build.
+
+**Not verified by compiling** — same sandbox limitation as everything
+else this project has been built under this way. This integration is
+based on current Google documentation (fetched live this session, not
+recalled from training data) rather than guessed API shapes, but a real
+build/device test is still necessary before trusting it — the UMP SDK's
+consent form only actually renders for a user whose device/region
+triggers it, so a passing debug build without a forced EEA geography
+won't visibly prove much on its own.
 
 ---
 
@@ -720,7 +886,7 @@ access + a validation step server-side.
 
 ## 7. Open Items / Not Yet Built
 
-- [ ] Onboarding flow: explain permissions before requesting them, deep-link to `ACTION_NOTIFICATION_LISTENER_SETTINGS`, request battery-optimization exemption
+- [x] ~~Onboarding flow: explain permissions before requesting them, deep-link to `ACTION_NOTIFICATION_LISTENER_SETTINGS`, request battery-optimization exemption~~ — done 2026-09-04, see ยง2.22 (battery step opens App Info settings rather than a direct exemption request — see that section for why)
 - [x] ~~Biometric/PIN app lock + auto-lock on background~~ — done 2026-08-20, see ยง2.16
 - [ ] Consider requiring re-authentication to *disable* app lock too, not just to enable it (currently a deliberate simplicity tradeoff)
 - [x] ~~"Needs review" queue UI for low-confidence parses~~ — done 2026-08-18 as a banner + full-edit dialog (reuses existing filter infra rather than a separate screen), see ยง2.14
@@ -731,7 +897,7 @@ access + a validation step server-side.
 - [ ] In-app privacy/data disclosure screen
 - [ ] Play Console Data Safety form draft
 - [x] ~~Re-enable SMS fallback path before any signed/release build~~ — superseded 2026-08-18: permanently removed instead, per Google Play policy (see ยง2.12)
-- [ ] Get Play Console's Permissions Declaration Form ready for Notification Listener access (justification + demo video) before submission
+- [ ] ~~Get Play Console's Permissions Declaration Form ready for Notification Listener access (justification + demo video) before submission~~ — corrected 2026-09-04: research indicates Notification Listener isn't in Play's enumerated Permissions Declaration Form list (unlike SMS/Accessibility/etc.) — see ยง10.2. Re-verify directly in Play Console before submission rather than trusting this note alone.
 - [ ] Write and publish a Privacy Policy page (mandatory for Play Store submission, especially with sensitive permissions)
 - [ ] Complete Play Console's Data Safety form
 - [ ] Set up release signing (keystore) and test a real `buildTypes.release` build with R8/ProGuard — currently only ever built as debug
@@ -753,7 +919,7 @@ access + a validation step server-side.
 - [ ] Recurring detection only matches on exact-ish merchant name (trim+lowercase) — no fuzzy matching for slightly different spellings of the same merchant across messages
 - [ ] Balance tracking shows only the single latest balance per source, no history/trend over time
 - [x] ~~Fix cross-source duplicate transactions still appearing despite ยง2.15 matching logic~~ — done 2026-09-02: root cause was a check-then-insert race, not the matching criteria; fixed via a single `@Transaction` DAO method, see ยง2.15 amendment
-- [x] ~~Restructure bottom nav to free space for the banner ad; surface needs-review count as a badge~~ — done 2026-09-02, see ยง2.20
+- [x] ~~Restructure bottom nav to free space for the banner ad; surface needs-review count as a badge~~ — done 2026-09-02, see ยง2.20 (superseded 2026-09-03: Search moved off the nav bar entirely into a top-bar overlay, see amendment)
 - [x] ~~Gate Backup & Restore + Export to CSV behind Pro subscription~~ — done 2026-09-02, see ยง2.21
 - [x] ~~Show net spent/received total, color-coded~~ — done 2026-09-02, see ยง2.20
 - [x] ~~Scope home screen to current month only; add a separate monthly-history screen with month/year picker~~ — done 2026-09-02, see ยง2.19
@@ -800,6 +966,12 @@ access + a validation step server-side.
 | 2026-09-02 | `MonthRange` implements `Serializable` | Needed for `rememberSaveable` on `MonthlyHistoryScreen`'s selected-month state — a plain Kotlin data class isn't saveable across process death/config change without this, and would throw at runtime the first time Compose tried to save it. |
 | 2026-09-02 | Monthly-vs-yearly summary preference stored in `SharedPreferences` (new `SummaryPeriodStore`), not a new Room column/table | Same reasoning as the 2026-08-18 dismissed-recurring-suggestions decision — a single low-stakes UI preference doesn't justify a schema migration. |
 | 2026-09-02 | Backup & Restore + CSV Export fully hidden (not grayed-out-with-upsell) for free-tier users | Matches explicit product direction this session. Tracked as a reconsiderable tradeoff in Open Items, since it trades a conversion-nudge opportunity for simplicity/literalness. |
+| 2026-09-03 | Restored tap-to-filter on Sent/Received as a local per-screen state, rather than routing taps to the Search overlay | Real usage showed people relied on the quick in-place toggle on the home screen itself; sending them elsewhere for something that used to be a single tap would have been a regression disguised as a simplification. Kept deliberately separate from `SearchReviewScreen`'s own filter state (no NEEDS_REVIEW option, doesn't persist as a saved search) since the two serve different purposes — quick glance vs. deliberate search. |
+| 2026-09-03 | Restored a second banner ad at the bottom of `TransactionsScreen`, in addition to the new top placement | Moving one ad to the top to use the freed-up space was the actual ask; dropping the bottom placement entirely was an unrequested side effect of that change. The month-scoped list is short enough now that both fit without crowding the actual transaction data. |
+| 2026-09-03 | Reworked Search from a 5th bottom-nav tab into a top-bar-icon-triggered overlay | A nav tab is a destination that replaces the current screen; search is a transient action people expect to dismiss back into whatever they were looking at (typically the current-month Transactions list). Reusing the existing `showSettings`/`showMonthlyHistory` overlay pattern kept the change small and consistent, and incidentally un-crowds the bottom nav back to 4 items. |
+| 2026-09-04 | First-launch onboarding built as a fixed 3-page flow with a plain enum + Next buttons, no pager library | Consistent with the project's recurring preference for plain Compose over an unfamiliar library's exact API (same reasoning as the Canvas-based Charts screen over Vico) — three fixed pages don't need a pager's swipe/animation machinery. |
+| 2026-09-04 | Onboarding tracks "has seen the disclosure," not "has granted the permission" | Forcing the full 3-page flow again on every launch until the user grants notification access would be worse than the existing `OnboardingBanner` reminder it falls back to after a "Skip for now." The disclosure only needs to happen once; the reminder can be ongoing and lighter-weight. |
+| 2026-09-04 | Battery-settings onboarding step opens App Info, not a direct `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` dialog | The direct exemption intent requires declaring `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` in the manifest, itself a Play Console-restricted permission needing a core-functionality justification. Battery exemption is a reliability nice-to-have here, not core functionality, so it wouldn't clear that bar — opening the plain App Info screen achieves the same end for a motivated user with zero manifest/Play-declaration risk. |
 
 ---
 
@@ -810,6 +982,235 @@ permission, or resolves/adds an Open Item should update the relevant section
 above **in the same commit**. Treat this file as the single source of truth
 above code comments — code comments should point back here (`see
 REQUIREMENTS.md ยงX`) rather than duplicating the reasoning.
+
+---
+
+## 10. Play Store Submission Readiness (added 2026-09-04)
+
+Researched live (web search) rather than from training memory, since Play
+policy changes frequently and this app's history already includes one
+policy-driven rewrite (the SMS-permission removal, ยง2.12). Current as of
+**2026-09-04** — re-verify anything time-sensitive before actually
+submitting, especially the dated items below.
+
+### 10.1 Blockers — must resolve before this app can go live
+
+- [ ] **Target API level is behind the current requirement.** As of
+      **August 31, 2026** (already past as of this writing), Google Play
+      requires *new* app submissions to target **Android 16 (API level
+      36)**. This project currently targets **API 35** (ยง5 Dependency
+      Manifest / build.gradle). A one-time extension to **November 1,
+      2026** can be requested in Play Console if needed, but the app
+      cannot be submitted as-is. Bumping `compileSdk`/`targetSdk` to 36
+      needs **AGP โ‰ฅ 8.9.0** (current: 8.5.2) and very likely a matching
+      Gradle bump (current: 8.7) — this is realistically **another
+      coordinated dependency bump**, the same category of work as the
+      Kotlin 2.3.20/Room 2.8.4/AGP 8.5.2 bump already done for Play
+      Billing/AdMob. Budget real time for this; don't treat it as a
+      one-line manifest edit. Test a full click-through after, same as
+      last time.
+- [ ] **Closed testing requirement for new personal developer accounts.**
+      If the Play Console developer account used to publish this app is a
+      **personal account created after November 13, 2023**, Google
+      requires a closed test with **at least 12 testers opted in
+      continuously for 14 days** before production access can even be
+      *applied for* — this is a hard gate with no way around it short of
+      using an organization account (which requires a legal business
+      entity + D-U-N-S number and is exempt). This is a **timeline
+      blocker, not a technical one**: budget at least 2 weeks, plus time
+      to actually recruit 12 people who will open the app repeatedly
+      during that window — Google's 2026 enforcement reportedly checks
+      genuine engagement, not just opt-in count. Start this track early;
+      it can run in parallel with other prep, not after it.
+- [ ] **Release signing keystore + a tested release build** — per
+      existing Open Items, only ever built debug so far. A release build
+      with R8/ProGuard can behave differently (obfuscation breaking
+      reflection-based libraries, resource shrinking removing something
+      used only via reflection/name lookup) — test thoroughly, don't
+      assume "debug worked" implies "release works."
+- [ ] **Privacy Policy page** — mandatory, must be a real hosted URL (not
+      a placeholder), and its content must **match the Data Safety form
+      answers exactly**. Per current guidance, mismatches between the two
+      are a common rejection/enforcement trigger — generate both from the
+      same source facts rather than writing them independently.
+- [ ] **Data Safety form** — must be completed accurately for every data
+      category the app (and its SDKs) actually touch. For this app that
+      includes: financial transaction data (on-device only, disclose that
+      clearly), advertising/device identifiers (via AdMob), purchase
+      history (via Play Billing). Google's stated enforcement approach
+      cross-references declared answers against what the shipped APK
+      actually does, including bundled SDK behavior — this is not a
+      box-ticking formality with low consequences for getting it wrong.
+- [ ] **AdMob real App ID + ad unit IDs** — currently test IDs (ยง2.18);
+      shipping test IDs means the app publishes fine but earns nothing.
+      Not a rejection risk, but effectively a launch blocker for the
+      business reason the ads exist at all.
+- [ ] **Play Billing subscription products** must exist in Play Console
+      with the exact IDs already referenced in code
+      (`expense_tracker_pro_monthly`, `expense_tracker_pro_yearly`), and
+      the app needs to reach at least Internal Testing with a License
+      Tester account added before Billing can be exercised at all (ยง2.17).
+
+### 10.2 Researched and corrected: Notification Listener does *not* need the SMS-style Permissions Declaration Form
+
+REQUIREMENTS.md's Open Items previously assumed a "Permissions Declaration
+Form for Notification Listener access" would be needed (ยง7, pre-existing
+item). Based on current Play Console documentation, **this appears to be
+incorrect** — the Permissions Declaration Form process is specifically
+enumerated for a fixed set of permissions: SMS/Call Log, Accessibility
+Service, `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, background
+location, exact alarms, full-screen intent, and (from 2027) broad Contacts
+access. `BIND_NOTIFICATION_LISTENER_SERVICE` — the permission this app's
+`NotificationCaptureService` declares — was not found in that enumerated
+list in current documentation, and real published apps use this exact
+pattern (a Kotlin/Flutter expense-tracker reading bank notification alerts
+via `NotificationListenerService`, and a Wear OS companion app doing the
+same for a specific bank, both found during this research) without it
+being described as requiring that form.
+
+**This is not a green light to be careless.** Notification access is
+separately flagged by Google Play Protect as one of four permissions
+"frequently abused for financial fraud" (alongside `RECEIVE_SMS`,
+`READ_SMS`, `ACCESSIBILITY`) for apps installed via sideloading — this
+shouldn't trigger for users who install through Play normally, but
+reinforces that Play's manual/automated review will likely scrutinize
+*what the notification listener actually does with the data* under the
+general **User Data / Personal and Sensitive Information policy** —
+prominent disclosure before access, ability to see what's collected, and
+accurate Data Safety answers — rather than the SMS-specific declaration
+form. The onboarding flow built this session (ยง2.22) and the existing
+data-minimization design (raw text discarded immediately, ยง2.2/ยง3) are
+exactly the substance of what that policy area is checking for; there's
+no separate form-filling step analogous to the SMS one identified.
+
+**Caveat**: Play policy is enforced partly through automated matching and
+partly through discretionary human review, and enforcement has reportedly
+tightened over time for exactly this class of permission (financial apps
+reading device-wide signals). Budget for the possibility that Play's
+review team asks a clarifying question specifically about notification
+scope even without a formal declaration form — the onboarding disclosure
+and this file's own data-minimization history are the evidence to point to
+if that happens. Re-check the current Permissions Declaration Form list in
+Play Console directly before submitting, since this was researched, not
+assumed, but policy pages do change.
+
+### 10.3 Standard submission checklist (not currently blockers, but not yet done)
+
+- [ ] Play Console developer account registration (one-time $25 fee) if
+      not already done, plus identity verification (government ID for
+      personal accounts; D-U-N-S number for organization accounts) —
+      Google has been rolling out mandatory identity verification for new
+      developer accounts.
+- [ ] Store listing assets: app icon (512×512 hi-res, plus the real
+      adaptive icon already shipped per ยง Decision Log 2026-08-15/16),
+      feature graphic (1024×500), at least 2 phone screenshots, short
+      description (โ‰ค80 chars), full description (โ‰ค4000 chars).
+- [ ] Content rating questionnaire (IARC) — straightforward for a finance
+      utility app with no user-generated content, but still required.
+- [ ] Target audience & content declaration — this app is not
+      child-directed; declare accordingly, and note the app is not itself
+      a regulated financial product (it doesn't move money, lend, or give
+      financial advice) — worth stating that explicitly in the store
+      listing per current guidance that financial-category apps face
+      extra scrutiny on any language that could read as investment/credit
+      claims.
+- [ ] Ads declaration (the app shows ads — Play Console has a direct
+      yes/no toggle plus a "contains ads" store-listing badge).
+- [ ] Account deletion — Play policy requires apps that support account
+      creation to offer in-app account *and data* deletion; this app has
+      no account/login concept, but "Delete all data" already exists
+      (ยง2.13) — confirm during Data Safety form completion whether this
+      needs to be declared as satisfying that requirement or whether it's
+      out of scope since there's no account system at all.
+
+### 10.4 Release signing — what actually got wired up this session
+
+`app/build.gradle` previously had a `buildTypes.release` block
+(minification/shrinking) but **no `signingConfig` at all** — a
+`bundleRelease`/`assembleRelease` build would have produced an unsigned
+artifact. This session added:
+
+- A `signingConfigs.release` block that reads from a **local, git-ignored
+  `keystore.properties`** file (never the committed `build.gradle` itself)
+  — `keystore.properties.example` at the repo root shows the format.
+- If `keystore.properties` doesn't exist (fresh clone, CI without secrets
+  configured), the release build type simply has no signing config.
+  `bundleRelease` will still **succeed** but produce an **unsigned**
+  `.aab` — Gradle doesn't hard-fail at build time for this, the failure
+  only shows up later when you try to `adb install` it (rejected, no
+  signature) or upload it to Play Console (rejected on upload). Don't
+  mistake a clean build for a ready-to-upload one without
+  `keystore.properties` actually present and correct.
+- `.gitignore` updated to exclude `keystore.properties` alongside the
+  already-ignored `*.jks`/`*.keystore`.
+
+**Still a manual step, deliberately not automated**: actually generating
+the keystore. This can't be done inside this repo/session — it's a secret
+only you should generate and hold. One-time, from a terminal with a JDK
+available:
+
+```bash
+keytool -genkeypair -v -keystore release-upload-key.jks \
+  -alias expense-tracker-upload -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Answers the prompts interactively (name, org, password — pick a strong
+password and **store it somewhere durable**; losing this file or its
+password with no backup means losing the ability to update this app on
+Play ever again, since Google can't recover it for you). Place the
+resulting `.jks` file outside the repo (or anywhere already covered by
+`.gitignore`) and fill in `keystore.properties` from the `.example`
+template to point at it.
+
+**Play App Signing (recommended, not yet opted into — a Play Console
+action, not a code change)**: when you create the app in Play Console and
+upload your first release, opt into Play App Signing. Under this model,
+the keystore above becomes your **upload key** only — Google holds a
+separate **app signing key** and re-signs the distribution APKs it
+generates from your uploaded AAB with that key instead. Benefit: if the
+upload key is ever lost or compromised, Google can help you rotate to a
+new one without losing the app, which isn't possible if you manage the
+one-and-only signing key yourself outside this program.
+
+### 10.5 What you actually upload / fill in, concretely
+
+Two different kinds of "submission artifact" — worth being clear on which
+is which:
+
+**Files you upload:**
+- The **signed `.aab`** (Android App Bundle) — **not** an `.apk`. Google
+  has required AAB for all new app submissions since August 2021; a plain
+  APK upload isn't accepted for a first submission at all. Build via
+  `./gradlew bundleRelease` (parallel to the existing
+  `./gradlew assembleDebug` used throughout this project so far) — output
+  lands at `app/build/outputs/bundle/release/app-release.aab` once
+  release signing (ยง10.4) is in place. This is what actually goes into
+  each testing track / production release in Play Console.
+- Store listing images: hi-res app icon (512×512 PNG), feature graphic
+  (1024×500), at least 2 phone screenshots (per ยง10.3) — uploaded
+  directly as image files in the Play Console store listing page, not
+  part of the AAB.
+
+**Information you fill in (Play Console web forms, nothing to "upload"
+as a file for these):**
+- Store listing text: app name, short description (โ‰ค80 chars), full
+  description (โ‰ค4000 chars).
+- Content rating questionnaire (IARC) answers.
+- Target audience & content declaration.
+- Ads declaration (yes, this app shows ads).
+- Data Safety form answers.
+- Privacy Policy **URL** (the policy itself is a hosted web page you
+  control, e.g. on GitHub Pages or your own domain — Play Console only
+  needs the link, not a file upload).
+
+**Sequencing note**: the closed-testing requirement (ยง10.1) means your
+first `.aab` upload realistically goes to an **Internal Testing** or
+**Closed Testing** track, not Production directly — Play Console won't
+let a new personal-account app reach Production until the 12-tester/
+14-day closed test is satisfied. Build and upload early to that track
+once you have a signed release build, rather than waiting until
+everything else on this checklist is also done — the testing clock only
+starts once real testers are opted in and using it.
 
 To download the app
 python3 -m http.server 8000 --directory app/build/outputs/apk/debug

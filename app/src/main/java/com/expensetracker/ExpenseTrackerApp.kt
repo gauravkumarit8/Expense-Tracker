@@ -6,7 +6,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.expensetracker.util.ReminderNotificationHelper
 import com.expensetracker.worker.ReminderCheckWorker
-import com.google.android.gms.ads.MobileAds
 import net.sqlcipher.database.SQLiteDatabase
 import java.util.concurrent.TimeUnit
 
@@ -17,12 +16,14 @@ class ExpenseTrackerApp : Application() {
 
         ReminderNotificationHelper.ensureChannel(this)
 
-        // Fire-and-forget init — ad loads simply won't succeed until this
-        // completes, no need to block app startup on it. Gracefully does
-        // nothing useful if the device has no network at launch; ad slots
-        // just stay empty rather than the app failing to start. Core
-        // tracking functionality never depends on this succeeding.
-        MobileAds.initialize(this) { }
+        // Mobile Ads SDK initialization moved to MainActivity.onCreate,
+        // gated behind UMP consent gathering (see ads/ConsentManager.kt and
+        // REQUIREMENTS.md ยง2.23) — it used to run unconditionally right
+        // here, which is no longer correct: requestConsentInfoUpdate()
+        // needs an Activity (not an Application Context), and Google's EU
+        // User Consent Policy requires consent be resolved before the ads
+        // SDK initializes at all for EEA/UK users, not just before an ad
+        // request.
 
         val reminderCheckRequest = PeriodicWorkRequestBuilder<ReminderCheckWorker>(1, TimeUnit.DAYS).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(

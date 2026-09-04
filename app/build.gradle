@@ -6,6 +6,25 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+// Release signing config, loaded from a LOCAL, GIT-IGNORED
+// keystore.properties file (see keystore.properties.example at the repo
+// root for the format, and REQUIREMENTS.md ยง10.4 for how to generate the
+// actual keystore this points to). Never hardcode a real path/password
+// here — this file is committed. If keystore.properties doesn't exist
+// (e.g. a fresh clone, or CI without secrets configured), the release
+// build type simply has no signingConfig — `bundleRelease`/
+// `assembleRelease` will still SUCCEED, but produce an UNSIGNED artifact
+// that can't be installed via adb or uploaded to Play Console. That
+// failure shows up later (install/upload time), not at build time — don't
+// mistake a clean `bundleRelease` for a ready-to-upload bundle without
+// keystore.properties actually present.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+def hasSigningConfig = keystorePropertiesFile.exists()
+if (hasSigningConfig) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace 'com.expensetracker'
     compileSdk 35
@@ -18,11 +37,25 @@ android {
         versionName "0.1.0"
     }
 
+    signingConfigs {
+        if (hasSigningConfig) {
+            release {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (hasSigningConfig) {
+                signingConfig signingConfigs.release
+            }
         }
         debug {
             minifyEnabled false
@@ -93,6 +126,13 @@ dependencies {
     // the new "Next-Gen" SDK (announced July 2026, different API shape) —
     // see REQUIREMENTS.md ยง2.18 for why.
     implementation "com.google.android.gms:play-services-ads:23.6.0"
+
+    // Google User Messaging Platform (UMP) SDK — required since January
+    // 2024 for any app serving Google ads to EEA/UK/regulated-US-state
+    // users; gathers consent before the Mobile Ads SDK is initialized.
+    // Standalone dependency, not bundled in play-services-ads. See
+    // REQUIREMENTS.md ยง2.23 and ads/ConsentManager.kt.
+    implementation "com.google.android.ump:user-messaging-platform:4.0.0"
 
     // JSON parsing for bundled bank_patterns.json
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2"

@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,6 +49,8 @@ import com.expensetracker.data.ReminderDao
 import com.expensetracker.data.Transaction
 import com.expensetracker.data.TransactionDao
 import com.expensetracker.util.NotificationAccessHelper
+import com.expensetracker.util.OnboardingStore
+import com.expensetracker.util.BatteryOptimizationHelper
 import com.expensetracker.util.AppLockManager
 import com.expensetracker.util.BiometricAuthHelper
 import com.expensetracker.util.DismissedSuggestionsStore
@@ -57,6 +60,7 @@ import com.expensetracker.util.MonthRange
 import com.expensetracker.util.SummaryPeriod
 import com.expensetracker.util.SummaryPeriodStore
 import com.expensetracker.ads.BannerAdView
+import com.expensetracker.ads.ConsentManager
 import com.expensetracker.billing.BillingManager
 import com.expensetracker.update.AppUpdateHelper
 import com.android.billingclient.api.ProductDetails
@@ -79,22 +83,190 @@ private enum class SortOption(val label: String) {
     AMOUNT_HIGH("Amount: high to low"), AMOUNT_LOW("Amount: low to high")
 }
 
+// ---------- FIRST-LAUNCH ONBOARDING / DISCLOSURE FLOW ----------
+//
+// REQUIREMENTS.md ยง2.22 (added 2026-09-04). Three fixed pages (no pager
+// library dependency — kept to a simple page-index int, consistent with
+// the project's general "avoid unfamiliar library APIs where plain
+// Compose does the job" approach, see the Vico/Canvas-chart decision):
+//   1. What the app does
+//   2. What we read, and what we never do (the actual disclosure content)
+//   3. Grant Notification Access — the actual permission ask, with an
+//      explicit "Skip for now" path; this is never allowed to be a dead
+//      end, since Play policy requires the app remain usable (manual entry
+//      still works) without the permission.
+// Shown once ever, gated by OnboardingStore — see MainActivity.onCreate.
+
+private enum class OnboardingPage { WELCOME, TRANSPARENCY, PERMISSION }
+
+@Composable
+private fun OnboardingScreen(
+    notificationAccessGranted: Boolean,
+    onEnableNotificationAccess: () -> Unit,
+    onOpenAppInfo: () -> Unit,
+    onFinish: () -> Unit
+) {
+    var page by rememberSaveable { mutableStateOf(OnboardingPage.WELCOME) }
+    val pages = OnboardingPage.entries
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {},
+                actions = {
+                    // Fast-forwards past the explainer copy straight to the
+                    // actual disclosure + permission page — never skips the
+                    // disclosure itself, only the "what this app is" intro.
+                    if (page != OnboardingPage.PERMISSION) {
+                        TextButton(onClick = { page = OnboardingPage.PERMISSION }) { Text("Skip intro") }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
+        },
+        bottomBar = {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    pages.forEach { p ->
+                        Box(
+                            modifier = Modifier
+                                .padding(4.dp)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (p == page) MaterialTheme.colorScheme.primary else Color(0xFFE0E0E0))
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+                when (page) {
+                    OnboardingPage.WELCOME, OnboardingPage.TRANSPARENCY -> {
+                        Button(
+                            onClick = { page = pages[pages.indexOf(page) + 1] },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Next") }
+                    }
+                    OnboardingPage.PERMISSION -> {
+                        Button(onClick = onEnableNotificationAccess, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (notificationAccessGranted) "Notification access granted ✓" else "Open notification access settings")
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(onClick = onOpenAppInfo, modifier = Modifier.fillMaxWidth()) {
+                            Text("Also check battery settings")
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        TextButton(onClick = onFinish, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (notificationAccessGranted) "Continue" else "Skip for now — I'll add transactions manually")
+                        }
+                    }
+                }
+            }
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            when (page) {
+                OnboardingPage.WELCOME -> OnboardingWelcomePage()
+                OnboardingPage.TRANSPARENCY -> OnboardingTransparencyPage()
+                OnboardingPage.PERMISSION -> OnboardingPermissionPage(notificationAccessGranted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingWelcomePage() {
+    Icon(
+        Icons.Filled.AccountBalanceWallet, contentDescription = null,
+        modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary
+    )
+    Spacer(modifier = Modifier.height(24.dp))
+    Text("Track expenses automatically", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+    Spacer(modifier = Modifier.height(16.dp))
+    Text(
+        "Expense Tracker reads transaction alerts from your banking and UPI apps — things like \"Rs.500 debited...\" or \"You received Rs.1200\" — and logs them for you automatically. No typing every purchase by hand.",
+        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = Color(0xFF555555)
+    )
+}
+
+@Composable
+private fun OnboardingTransparencyPage() {
+    Icon(
+        Icons.Filled.Shield, contentDescription = null,
+        modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary
+    )
+    Spacer(modifier = Modifier.height(20.dp))
+    Text("What we read — and what we never do", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+    Spacer(modifier = Modifier.height(20.dp))
+    val points = listOf(
+        Icons.Filled.NotificationsActive to "We only read notifications from your banking, UPI, and messaging apps — never chats, social apps, or anything else.",
+        Icons.Filled.Bolt to "We pull out just the amount, direction, date, and merchant. The original message text is discarded right after — it's never saved.",
+        Icons.Filled.CloudOff to "Nothing leaves your phone. Transactions are encrypted and stored only on this device — there's no server to send it to.",
+        Icons.Filled.Block to "This app never asks for SMS permissions. Android's Notification Access is the only way we read alerts, and you control it from Settings any time."
+    )
+    points.forEach { (icon, text) ->
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp).padding(top = 2.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF444444))
+        }
+    }
+}
+
+@Composable
+private fun OnboardingPermissionPage(notificationAccessGranted: Boolean) {
+    Icon(
+        if (notificationAccessGranted) Icons.Filled.CheckCircle else Icons.Filled.NotificationsActive,
+        contentDescription = null,
+        modifier = Modifier.size(72.dp),
+        tint = if (notificationAccessGranted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary
+    )
+    Spacer(modifier = Modifier.height(24.dp))
+    Text(
+        if (notificationAccessGranted) "You're all set" else "One step to turn on auto-capture",
+        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+    Text(
+        if (notificationAccessGranted) {
+            "Notification access is already on — bank and UPI alerts will be captured automatically from now on."
+        } else {
+            "Tap below to open Android's Notification Access screen, then turn on the switch next to Expense Tracker. This is a system screen — Android, not us, controls it, and you can turn it off any time."
+        },
+        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = Color(0xFF555555)
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        "You can still add and edit transactions manually if you'd rather not grant this — it just won't auto-capture new ones.",
+        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = Color.Gray
+    )
+}
+
 private enum class Screen(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     TRANSACTIONS("Transactions", Icons.Filled.List),
     CHARTS("Charts", Icons.Filled.BarChart),
     BUDGETS("Budgets", Icons.Filled.PieChart),
-    // Search/Filter/Sort/Needs-Review moved here from the top of the
-    // Transactions screen (REQUIREMENTS.md ยง2.20) — frees that screen's top
-    // region for the banner ad and a month-scoped summary instead of
-    // permanently-docked search chrome. Badge count shown on this tab's icon
-    // mirrors the needs-review count.
-    SEARCH("Search", Icons.Filled.Search),
     REMINDERS("Reminders", Icons.Filled.NotificationsActive)
 }
 
 class MainActivity : FragmentActivity() {
     private lateinit var billingManager: BillingManager
     private lateinit var appUpdateHelper: AppUpdateHelper
+
+    // Set once UMP consent is resolved (obtained, or not required) AND the
+    // Mobile Ads SDK has been initialized — BannerAdView must not render
+    // before this is true. A plain Compose-observable property on the
+    // Activity (rather than state declared inside setContent) so the
+    // ConsentManager callback — which fires asynchronously, independent of
+    // any single composition — can update it directly. See
+    // ads/ConsentManager.kt and REQUIREMENTS.md ยง2.23.
+    private var canRequestAds by mutableStateOf(false)
+    // True if this user's region requires an always-available way to
+    // revisit their ad-consent choice — drives the Settings "Privacy & Ad
+    // Consent" row's visibility.
+    private var privacyOptionsRequired by mutableStateOf(false)
 
     private val updateFlowLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
@@ -110,6 +282,16 @@ class MainActivity : FragmentActivity() {
         billingManager = BillingManager(applicationContext)
         billingManager.startConnection()
         appUpdateHelper = AppUpdateHelper(this)
+
+        // Gather/refresh ad consent before anything ad-related can render.
+        // requestConsentInfoUpdate() needs this Activity, not just an
+        // Application Context, which is why this no longer lives in
+        // ExpenseTrackerApp.onCreate. Safe to call on every onCreate — the
+        // UMP SDK itself decides whether a form actually needs to show.
+        ConsentManager.gatherConsent(this) { resolved ->
+            canRequestAds = resolved
+            privacyOptionsRequired = ConsentManager.isPrivacyOptionsRequired()
+        }
 
         setContent {
             MaterialTheme {
@@ -161,8 +343,7 @@ class MainActivity : FragmentActivity() {
 
                 var screen by rememberSaveable { mutableStateOf(Screen.TRANSACTIONS) }
                 val allTransactions by transactionDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
-                // Drives the red badge on the Search tab (REQUIREMENTS.md ยง2.20)
-                // — same count the old top-of-screen NeedsReviewBanner showed.
+                // Drives the red badge on the Search top-bar icon.
                 val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
                 var showManualEntry by remember { mutableStateOf(false) }
                 var showAddReminder by remember { mutableStateOf(false) }
@@ -170,10 +351,18 @@ class MainActivity : FragmentActivity() {
                 var showSettings by remember { mutableStateOf(false) }
                 // Full-screen overlay reached from "See all months" on the
                 // Transactions tab — mirrors the existing showSettings pattern
-                // rather than adding a 6th bottom-nav tab. See ยง2.19.
+                // rather than adding a bottom-nav tab. See ยง2.19.
                 var showMonthlyHistory by remember { mutableStateOf(false) }
+                // Search (2026-09-03 rework): also an overlay, not a bottom-nav
+                // tab that replaces the current screen's content. Opened from a
+                // top-bar icon (like Settings) and closes back to whatever
+                // screen — Transactions with its current-month list, Charts,
+                // Budgets, or Reminders — was showing underneath, rather than
+                // discarding it. See REQUIREMENTS.md ยง2.20 amendment.
+                var showSearch by remember { mutableStateOf(false) }
                 androidx.activity.compose.BackHandler(enabled = showSettings) { showSettings = false }
                 androidx.activity.compose.BackHandler(enabled = showMonthlyHistory) { showMonthlyHistory = false }
+                androidx.activity.compose.BackHandler(enabled = showSearch) { showSearch = false }
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 val exportLauncher = rememberLauncherForActivityResult(
@@ -242,6 +431,26 @@ class MainActivity : FragmentActivity() {
 
                 val isLocked = appLockEnabled && !isUnlocked
 
+                // First-launch disclosure flow (2026-09-04) — explains what
+                // the app reads from notifications and why, before ever
+                // prompting for Notification Access. Tracks "has seen the
+                // explanation," not "has granted access" — declining on the
+                // last page still marks onboarding complete; the existing
+                // OnboardingBanner on the Transactions screen keeps
+                // reminding them afterward. See REQUIREMENTS.md ยง2.22.
+                var hasCompletedOnboarding by remember { mutableStateOf(OnboardingStore.hasCompleted(context)) }
+
+                if (!hasCompletedOnboarding) {
+                    OnboardingScreen(
+                        notificationAccessGranted = notificationAccessGranted,
+                        onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
+                        onOpenAppInfo = { context.startActivity(BatteryOptimizationHelper.appInfoIntent(context)) },
+                        onFinish = {
+                            OnboardingStore.setCompleted(context)
+                            hasCompletedOnboarding = true
+                        }
+                    )
+                } else {
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -251,19 +460,41 @@ class MainActivity : FragmentActivity() {
                                         isLocked -> "Expense Tracker"
                                         showSettings -> "Settings"
                                         showMonthlyHistory -> "Monthly History"
+                                        showSearch -> "Search"
                                         else -> screen.label
                                     }
                                 )
                             },
                             navigationIcon = {
-                                if (!isLocked && (showSettings || showMonthlyHistory)) {
-                                    IconButton(onClick = { showSettings = false; showMonthlyHistory = false }) {
+                                if (!isLocked && (showSettings || showMonthlyHistory || showSearch)) {
+                                    IconButton(onClick = { showSettings = false; showMonthlyHistory = false; showSearch = false }) {
                                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                                     }
                                 }
                             },
                             actions = {
-                                if (!isLocked && !showSettings && !showMonthlyHistory) {
+                                if (!isLocked && !showSettings && !showMonthlyHistory && !showSearch) {
+                                    // Search icon lives in the top bar rather than
+                                    // the bottom nav (2026-09-03 rework) — tapping
+                                    // it opens SearchReviewScreen as an overlay on
+                                    // top of whatever screen is currently showing,
+                                    // closing back to it afterward, instead of
+                                    // replacing the current-month Transactions view
+                                    // with a separate destination. Badge mirrors
+                                    // the old always-visible needs-review count.
+                                    IconButton(onClick = { showSearch = true }) {
+                                        if (needsReviewCount > 0) {
+                                            BadgedBox(badge = {
+                                                Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                    Text(if (needsReviewCount > 99) "99+" else "$needsReviewCount")
+                                                }
+                                            }) {
+                                                Icon(Icons.Filled.Search, contentDescription = "Search & review")
+                                            }
+                                        } else {
+                                            Icon(Icons.Filled.Search, contentDescription = "Search")
+                                        }
+                                    }
                                     IconButton(onClick = { showSettings = true }) {
                                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                                     }
@@ -273,7 +504,7 @@ class MainActivity : FragmentActivity() {
                     },
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        if (!showSettings && !showMonthlyHistory && !isLocked) {
+                        if (!showSettings && !showMonthlyHistory && !showSearch && !isLocked) {
                             NavigationBar {
                                 Screen.entries.forEach { s ->
                                     NavigationBarItem(
@@ -284,19 +515,7 @@ class MainActivity : FragmentActivity() {
                                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                             }
                                         },
-                                        icon = {
-                                            if (s == Screen.SEARCH && needsReviewCount > 0) {
-                                                BadgedBox(badge = {
-                                                    Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                                        Text(if (needsReviewCount > 99) "99+" else "$needsReviewCount")
-                                                    }
-                                                }) {
-                                                    Icon(s.icon, contentDescription = s.label)
-                                                }
-                                            } else {
-                                                Icon(s.icon, contentDescription = s.label)
-                                            }
-                                        },
+                                        icon = { Icon(s.icon, contentDescription = s.label) },
                                         label = { Text(s.label, fontSize = 10.sp) }
                                     )
                                 }
@@ -304,7 +523,7 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     floatingActionButton = {
-                        if (!showSettings && !showMonthlyHistory && !isLocked) {
+                        if (!showSettings && !showMonthlyHistory && !showSearch && !isLocked) {
                             when (screen) {
                                 Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
                                     Icon(Icons.Filled.Add, contentDescription = "Add cash transaction")
@@ -371,10 +590,33 @@ class MainActivity : FragmentActivity() {
                                         budgetDao.deleteAll()
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
+                                },
+                                canRequestAds = canRequestAds,
+                                privacyOptionsRequired = privacyOptionsRequired,
+                                onShowPrivacyOptions = {
+                                    ConsentManager.showPrivacyOptionsForm(this@MainActivity) {
+                                        // Re-resolve after the user
+                                        // potentially changed their choice —
+                                        // gatherConsent's callback updates
+                                        // both canRequestAds and
+                                        // privacyOptionsRequired once done.
+                                        ConsentManager.gatherConsent(this@MainActivity) { resolved ->
+                                            canRequestAds = resolved
+                                            privacyOptionsRequired = ConsentManager.isPrivacyOptionsRequired()
+                                        }
+                                    }
                                 }
                             )
                         } else if (showMonthlyHistory) {
                             MonthlyHistoryScreen(
+                                transactionDao = transactionDao,
+                                allTransactions = allTransactions
+                            )
+                        } else if (showSearch) {
+                            // Overlay, not a destination screen (2026-09-03) —
+                            // closes back to whatever `screen` was already
+                            // selected underneath (see the Back handling above).
+                            SearchReviewScreen(
                                 transactionDao = transactionDao,
                                 allTransactions = allTransactions
                             )
@@ -386,14 +628,11 @@ class MainActivity : FragmentActivity() {
                                     notificationAccessGranted = notificationAccessGranted,
                                     onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
                                     isPro = isPro,
+                                    canRequestAds = canRequestAds,
                                     onSeeAllMonths = { showMonthlyHistory = true }
                                 )
                                 Screen.CHARTS -> ChartsScreen(allTransactions)
                                 Screen.BUDGETS -> BudgetsScreen(budgetDao, allTransactions)
-                                Screen.SEARCH -> SearchReviewScreen(
-                                    transactionDao = transactionDao,
-                                    allTransactions = allTransactions
-                                )
                                 Screen.REMINDERS -> RemindersScreen(reminderDao, allTransactions)
                             }
                         }
@@ -448,6 +687,7 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+                } // end else (hasCompletedOnboarding)
         }
     }
 
@@ -485,6 +725,7 @@ private fun TransactionsScreen(
     notificationAccessGranted: Boolean,
     onEnableNotificationAccess: () -> Unit,
     isPro: Boolean,
+    canRequestAds: Boolean,
     onSeeAllMonths: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -522,8 +763,11 @@ private fun TransactionsScreen(
         // the BOTTOM too (2026-09-03 fix, restoring what ยง2.18 originally
         // specified) — the month-scoped list is short enough now that both
         // fit comfortably, and there's no reason to give up that ad slot
-        // just because the top one exists. Free users only.
-        if (!isPro) {
+        // just because the top one exists. Free users only, and only once
+        // UMP consent is resolved (ยง2.23) — canRequestAds stays false until
+        // then, so no ad request (real or test) fires before consent is
+        // gathered where required.
+        if (!isPro && canRequestAds) {
             BannerAdView()
         }
 
@@ -555,7 +799,7 @@ private fun TransactionsScreen(
             }
         }
 
-        if (!isPro) {
+        if (!isPro && canRequestAds) {
             BannerAdView()
         }
     }
@@ -602,15 +846,19 @@ private fun shortDate(millis: Long): String = SimpleDateFormat("d MMM", Locale.g
 
 // ---------- SEARCH / FILTER / SORT / NEEDS-REVIEW SCREEN ----------
 //
-// REQUIREMENTS.md ยง2.20 (2026-09-02): everything here used to live
+// REQUIREMENTS.md ยง2.20 (amended 2026-09-03): everything here used to live
 // permanently docked at the top of TransactionsScreen — the search bar,
-// filter chips, sort menu, and NeedsReviewBanner. Moved to its own
-// bottom-nav tab so the home screen's top region is free for the banner ad
-// and month summary, and so this tab's icon can carry a persistent
-// needs-review badge (see MainActivity's NavigationBar). This screen
+// filter chips, sort menu, and NeedsReviewBanner. First moved to its own
+// bottom-nav tab, then reworked into a full-screen OVERLAY (like Settings /
+// MonthlyHistoryScreen) opened from a top-bar Search icon instead — a
+// persistent nav tab that replaced the current month's list with a
+// different destination wasn't the right shape for "search," which is
+// inherently a transient action, not a place you live. Dismissing this
+// overlay returns to whatever screen (Transactions, Charts, Budgets, or
+// Reminders) was showing underneath, unchanged. This screen still
 // searches/filters across ALL transactions (not just the current month) —
-// unlike the now month-scoped home screen, "search" implies the full
-// history by default.
+// unlike the month-scoped home screen, "search" implies the full history
+// by default.
 
 @Composable
 private fun SearchReviewScreen(
@@ -2013,7 +2261,10 @@ private fun SettingsScreen(
     appLockEnabled: Boolean,
     canUseAppLock: Boolean,
     onAppLockToggle: (Boolean) -> Unit,
-    onDeleteAllData: () -> Unit
+    onDeleteAllData: () -> Unit,
+    canRequestAds: Boolean,
+    privacyOptionsRequired: Boolean,
+    onShowPrivacyOptions: () -> Unit
 ) {
     val context = LocalContext.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -2096,6 +2347,19 @@ private fun SettingsScreen(
                 onClick = onEnableNotificationAccess,
                 tint = if (notificationAccessGranted) Color(0xFF2E7D32) else Color(0xFFE65100)
             )
+            // Only shown when the UMP SDK determines this user's region
+            // requires an always-available way to revisit their ad-consent
+            // choice (e.g. EEA/UK) — GDPR requires consent be revocable,
+            // not just gatherable once at first launch. See ยง2.23.
+            if (privacyOptionsRequired) {
+                Spacer(modifier = Modifier.height(8.dp))
+                SettingsRow(
+                    icon = Icons.Filled.PrivacyTip,
+                    title = "Privacy & Ad Consent",
+                    subtitle = "Review or change your ad personalization choice",
+                    onClick = onShowPrivacyOptions
+                )
+            }
             Spacer(modifier = Modifier.height(20.dp))
         }
 
@@ -2123,7 +2387,7 @@ private fun SettingsScreen(
                 "Your transactions, budgets, and reminders stay on this device and are never transmitted anywhere. Subscriptions, ads, and app updates use Google's own services.",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray
             )
-            if (!isPro) {
+            if (!isPro && canRequestAds) {
                 Spacer(modifier = Modifier.height(20.dp))
                 BannerAdView()
             }
