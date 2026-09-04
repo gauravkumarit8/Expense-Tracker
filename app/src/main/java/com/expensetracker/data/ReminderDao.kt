@@ -1,4 +1,4 @@
-package com.expensetracker.data
+package com.autoexpensetracker.data
 
 import androidx.room.Dao
 import androidx.room.Insert

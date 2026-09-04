@@ -1,4 +1,4 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

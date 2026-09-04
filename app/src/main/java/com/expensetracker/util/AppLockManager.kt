@@ -1,4 +1,4 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
 import android.content.Context
 import androidx.biometric.BiometricManager

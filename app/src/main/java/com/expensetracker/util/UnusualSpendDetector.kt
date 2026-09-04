@@ -1,10 +1,10 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
 import android.content.Context
-import com.expensetracker.data.Category
-import com.expensetracker.data.Direction
-import com.expensetracker.data.Transaction
-import com.expensetracker.data.TransactionDao
+import com.autoexpensetracker.data.Category
+import com.autoexpensetracker.data.Direction
+import com.autoexpensetracker.data.Transaction
+import com.autoexpensetracker.data.TransactionDao
 
 /**
  * Flags a transaction as an unusual spend if it's significantly larger than

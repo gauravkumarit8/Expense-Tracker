@@ -1,12 +1,12 @@
-package com.expensetracker.listener
+package com.autoexpensetracker.listener
 
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import com.expensetracker.BuildConfig
-import com.expensetracker.worker.ParseAndStoreWorker
+import com.autoexpensetracker.BuildConfig
+import com.autoexpensetracker.worker.ParseAndStoreWorker
 
 /**
  * Primary transaction-capture path (see REQUIREMENTS.md Architecture ยง1).

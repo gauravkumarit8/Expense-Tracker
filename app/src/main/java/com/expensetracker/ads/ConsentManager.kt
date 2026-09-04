@@ -1,7 +1,7 @@
-package com.expensetracker.ads
+package com.autoexpensetracker.ads
 
 import android.app.Activity
-import com.expensetracker.BuildConfig
+import com.autoexpensetracker.BuildConfig
 import com.google.android.gms.ads.MobileAds
 import com.google.android.ump.ConsentDebugSettings
 import com.google.android.ump.ConsentInformation

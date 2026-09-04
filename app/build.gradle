@@ -26,11 +26,11 @@ if (hasSigningConfig) {
 }
 
 android {
-    namespace 'com.expensetracker'
+    namespace 'com.autoexpensetracker'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.expensetracker"
+        applicationId "com.autoexpensetracker"
         minSdk 24
         targetSdk 35
         versionCode 1

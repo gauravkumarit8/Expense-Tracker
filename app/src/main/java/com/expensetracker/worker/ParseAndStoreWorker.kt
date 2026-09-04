@@ -1,14 +1,14 @@
-package com.expensetracker.worker
+package com.autoexpensetracker.worker
 
 import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.expensetracker.BuildConfig
-import com.expensetracker.data.AppDatabase
-import com.expensetracker.data.InsertOutcome
-import com.expensetracker.parser.TransactionParser
-import com.expensetracker.util.UnusualSpendDetector
+import com.autoexpensetracker.BuildConfig
+import com.autoexpensetracker.data.AppDatabase
+import com.autoexpensetracker.data.InsertOutcome
+import com.autoexpensetracker.parser.TransactionParser
+import com.autoexpensetracker.util.UnusualSpendDetector
 
 /**
  * Runs off the main/callback thread. Parses the raw text, discards it, and

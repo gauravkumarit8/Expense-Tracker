@@ -1,6 +1,6 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
-import com.expensetracker.data.Transaction
+import com.autoexpensetracker.data.Transaction
 import kotlin.math.abs
 
 /**

@@ -1,8 +1,8 @@
-package com.expensetracker.parser
+package com.autoexpensetracker.parser
 
 import android.content.Context
-import com.expensetracker.data.Direction
-import com.expensetracker.data.Transaction
+import com.autoexpensetracker.data.Direction
+import com.autoexpensetracker.data.Transaction
 import java.security.MessageDigest
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors

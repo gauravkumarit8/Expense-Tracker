@@ -1,4 +1,4 @@
-package com.expensetracker.data
+package com.autoexpensetracker.data
 
 import android.content.Context
 import androidx.room.Database
@@ -8,7 +8,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
-import com.expensetracker.util.KeystoreHelper
+import com.autoexpensetracker.util.KeystoreHelper
 
 @Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {

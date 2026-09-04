@@ -1,4 +1,4 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -6,8 +6,8 @@ import android.content.Context
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.expensetracker.data.Category
-import com.expensetracker.data.Transaction
+import com.autoexpensetracker.data.Category
+import com.autoexpensetracker.data.Transaction
 
 object UnusualSpendNotificationHelper {
     private const val CHANNEL_ID = "unusual_spend_alerts"

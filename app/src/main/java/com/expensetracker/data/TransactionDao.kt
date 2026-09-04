@@ -1,4 +1,4 @@
-package com.expensetracker.data
+package com.autoexpensetracker.data
 
 import androidx.room.Dao
 import androidx.room.Insert
@@ -6,7 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction as RoomTransaction
 import androidx.room.Update
-import com.expensetracker.util.DuplicateDetector
+import com.autoexpensetracker.util.DuplicateDetector
 import kotlinx.coroutines.flow.Flow
 
 /**

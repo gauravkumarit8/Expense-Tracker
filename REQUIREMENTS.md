@@ -1215,7 +1215,7 @@ starts once real testers are opted in and using it.
 To download the app
 python3 -m http.server 8000 --directory app/build/outputs/apk/debug
 
-adb shell pidof -s com.expensetracker
+adb shell pidof -s com.autoexpensetracker
 adb logcat --pid=<new_pid>
 
 
@@ -1224,7 +1224,7 @@ adb install -r app-debug.apk
 To download the app
 python3 -m http.server 8000 --directory app/build/outputs/apk/debug
 
-adb shell pidof -s com.expensetracker
+adb shell pidof -s com.autoexpensetracker
 adb logcat --pid=<new_pid>
 
 

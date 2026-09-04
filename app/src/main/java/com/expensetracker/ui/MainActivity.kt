@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
-package com.expensetracker.ui
+package com.autoexpensetracker.ui
 
 import android.Manifest
 import android.os.Build
@@ -37,32 +37,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LifecycleStartEffect
-import com.expensetracker.backup.BackupPayload
-import com.expensetracker.backup.BackupSerializer
-import com.expensetracker.data.AppDatabase
-import com.expensetracker.data.Budget
-import com.expensetracker.data.BudgetDao
-import com.expensetracker.data.Category
-import com.expensetracker.data.Direction
-import com.expensetracker.data.Reminder
-import com.expensetracker.data.ReminderDao
-import com.expensetracker.data.Transaction
-import com.expensetracker.data.TransactionDao
-import com.expensetracker.util.NotificationAccessHelper
-import com.expensetracker.util.OnboardingStore
-import com.expensetracker.util.BatteryOptimizationHelper
-import com.expensetracker.util.AppLockManager
-import com.expensetracker.util.BiometricAuthHelper
-import com.expensetracker.util.DismissedSuggestionsStore
-import com.expensetracker.util.RecurringDetector
-import com.expensetracker.util.RecurringSuggestion
-import com.expensetracker.util.MonthRange
-import com.expensetracker.util.SummaryPeriod
-import com.expensetracker.util.SummaryPeriodStore
-import com.expensetracker.ads.BannerAdView
-import com.expensetracker.ads.ConsentManager
-import com.expensetracker.billing.BillingManager
-import com.expensetracker.update.AppUpdateHelper
+import com.autoexpensetracker.backup.BackupPayload
+import com.autoexpensetracker.backup.BackupSerializer
+import com.autoexpensetracker.data.AppDatabase
+import com.autoexpensetracker.data.Budget
+import com.autoexpensetracker.data.BudgetDao
+import com.autoexpensetracker.data.Category
+import com.autoexpensetracker.data.Direction
+import com.autoexpensetracker.data.Reminder
+import com.autoexpensetracker.data.ReminderDao
+import com.autoexpensetracker.data.Transaction
+import com.autoexpensetracker.data.TransactionDao
+import com.autoexpensetracker.util.NotificationAccessHelper
+import com.autoexpensetracker.util.OnboardingStore
+import com.autoexpensetracker.util.BatteryOptimizationHelper
+import com.autoexpensetracker.util.AppLockManager
+import com.autoexpensetracker.util.BiometricAuthHelper
+import com.autoexpensetracker.util.DismissedSuggestionsStore
+import com.autoexpensetracker.util.RecurringDetector
+import com.autoexpensetracker.util.RecurringSuggestion
+import com.autoexpensetracker.util.MonthRange
+import com.autoexpensetracker.util.SummaryPeriod
+import com.autoexpensetracker.util.SummaryPeriodStore
+import com.autoexpensetracker.ads.BannerAdView
+import com.autoexpensetracker.ads.ConsentManager
+import com.autoexpensetracker.billing.BillingManager
+import com.autoexpensetracker.update.AppUpdateHelper
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -395,7 +395,7 @@ class MainActivity : FragmentActivity() {
                         try {
                             val transactions = transactionDao.getAllOnce()
                             context.contentResolver.openOutputStream(uri)?.use { out ->
-                                out.write(com.expensetracker.backup.CsvExporter.toCsv(transactions).toByteArray())
+                                out.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray())
                             }
                             snackbarHostState.showSnackbar("CSV saved (${transactions.size} transactions)")
                         } catch (e: Exception) {
@@ -645,7 +645,7 @@ class MainActivity : FragmentActivity() {
                                 scope.launch {
                                     val id = transactionDao.insert(tx)
                                     if (id > 0) {
-                                        com.expensetracker.util.UnusualSpendDetector.checkAndNotify(context, transactionDao, tx.copy(id = id))
+                                        com.autoexpensetracker.util.UnusualSpendDetector.checkAndNotify(context, transactionDao, tx.copy(id = id))
                                     }
                                 }
                                 showManualEntry = false

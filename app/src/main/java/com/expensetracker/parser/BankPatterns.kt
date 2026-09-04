@@ -1,4 +1,4 @@
-package com.expensetracker.parser
+package com.autoexpensetracker.parser
 
 import android.content.Context
 import kotlinx.serialization.Serializable

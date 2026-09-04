@@ -1,11 +1,11 @@
-package com.expensetracker
+package com.autoexpensetracker
 
 import android.app.Application
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.expensetracker.util.ReminderNotificationHelper
-import com.expensetracker.worker.ReminderCheckWorker
+import com.autoexpensetracker.util.ReminderNotificationHelper
+import com.autoexpensetracker.worker.ReminderCheckWorker
 import net.sqlcipher.database.SQLiteDatabase
 import java.util.concurrent.TimeUnit
 

@@ -1,4 +1,4 @@
-package com.expensetracker.data
+package com.autoexpensetracker.data
 
 enum class Category(val label: String, val emoji: String) {
     FOOD("Food & Dining", "🍔"),

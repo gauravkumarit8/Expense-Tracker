@@ -1,4 +1,4 @@
-package com.expensetracker.update
+package com.autoexpensetracker.update
 
 import android.app.Activity
 import androidx.activity.result.ActivityResultLauncher

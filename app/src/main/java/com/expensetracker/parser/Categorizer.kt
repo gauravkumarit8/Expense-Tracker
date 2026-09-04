@@ -1,6 +1,6 @@
-package com.expensetracker.parser
+package com.autoexpensetracker.parser
 
-import com.expensetracker.data.Category
+import com.autoexpensetracker.data.Category
 
 /**
  * Lightweight keyword-based auto-categorization. Runs against the extracted

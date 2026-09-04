@@ -1,4 +1,4 @@
-package com.expensetracker.data
+package com.autoexpensetracker.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey

@@ -1,4 +1,4 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
 import java.io.Serializable
 import java.text.SimpleDateFormat

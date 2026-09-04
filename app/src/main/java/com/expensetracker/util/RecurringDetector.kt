@@ -1,8 +1,8 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
-import com.expensetracker.data.Direction
-import com.expensetracker.data.Reminder
-import com.expensetracker.data.Transaction
+import com.autoexpensetracker.data.Direction
+import com.autoexpensetracker.data.Reminder
+import com.autoexpensetracker.data.Transaction
 import java.text.SimpleDateFormat
 import java.util.*
 

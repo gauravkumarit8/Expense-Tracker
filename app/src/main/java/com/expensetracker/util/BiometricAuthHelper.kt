@@ -1,4 +1,4 @@
-package com.expensetracker.util
+package com.autoexpensetracker.util
 
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL

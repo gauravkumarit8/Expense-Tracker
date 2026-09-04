@@ -1,4 +1,4 @@
-package com.expensetracker.ads
+package com.autoexpensetracker.ads
 
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.fillMaxWidth

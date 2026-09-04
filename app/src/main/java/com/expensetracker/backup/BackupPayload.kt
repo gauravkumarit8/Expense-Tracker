@@ -1,8 +1,8 @@
-package com.expensetracker.backup
+package com.autoexpensetracker.backup
 
-import com.expensetracker.data.Budget
-import com.expensetracker.data.Reminder
-import com.expensetracker.data.Transaction
+import com.autoexpensetracker.data.Budget
+import com.autoexpensetracker.data.Reminder
+import com.autoexpensetracker.data.Transaction
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 

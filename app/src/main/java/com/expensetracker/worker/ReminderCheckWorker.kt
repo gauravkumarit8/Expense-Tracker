@@ -1,10 +1,10 @@
-package com.expensetracker.worker
+package com.autoexpensetracker.worker
 
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.expensetracker.data.AppDatabase
-import com.expensetracker.util.ReminderNotificationHelper
+import com.autoexpensetracker.data.AppDatabase
+import com.autoexpensetracker.util.ReminderNotificationHelper
 import java.text.SimpleDateFormat
 import java.util.*
 
