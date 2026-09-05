@@ -6,8 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
-import net.sqlcipher.database.SQLiteDatabase
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import com.autoexpensetracker.util.KeystoreHelper
 
 @Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 4, exportSchema = false)
@@ -18,7 +17,20 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun budgetDao(): BudgetDao
 
     companion object {
-        private const val DB_NAME = "expense_tracker_encrypted.db"
+        // Renamed from "expense_tracker_encrypted.db" on the
+        // sqlcipher-android migration (2026-09-04, REQUIREMENTS.md ยง10.6).
+        // The two libraries' underlying encrypted file formats are NOT
+        // guaranteed compatible — real-world reports of "file is not a
+        // database" errors exist for in-place upgrades between them. Rather
+        // than write and test one-time cross-library migration/export code
+        // for a database format switch (not a schema change Room's own
+        // Migration system can express at all), this deliberately opens a
+        // fresh file under a new name. Safe to do now specifically because
+        // this app has not yet reached Production — no real user has data
+        // in the old-format file that this would need to preserve. This
+        // must NOT be treated as a template for a future rename after
+        // real users exist.
+        private const val DB_NAME = "expense_tracker_encrypted_v2.db"
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -86,7 +98,7 @@ abstract class AppDatabase : RoomDatabase() {
             // (hardware-backed on most devices). It never touches disk in plaintext
             // and is never logged. See REQUIREMENTS.md Security ยง1.
             val passphrase: ByteArray = KeystoreHelper.getOrCreateDbPassphrase(context)
-            val factory = SupportFactory(passphrase)
+            val factory = SupportOpenHelperFactory(passphrase)
 
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)

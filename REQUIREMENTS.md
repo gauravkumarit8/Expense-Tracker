@@ -927,6 +927,10 @@ access + a validation step server-side.
 - [ ] Add `CREATE INDEX idx_transactions_timestampMillis` if month/year filtering moves to a DB-level query and shows up as slow at realistic data volumes (currently client-side over already-loaded data, see ยง2.19)
 - [ ] Unify `ChartsScreen`'s "this month only" limitation with `MonthlyHistoryScreen`'s month-selection state instead of having two independent month concepts (see ยง2.19)
 - [ ] Decide: gray-out-with-upsell vs. full-hide for Pro-gated Settings rows (currently full-hide per explicit direction — see ยง2.21 tradeoff note)
+- [x] ~~Bump `compileSdk`/`targetSdk` to 36 and AGP to 9.0+ for the Play target-API requirement~~ — done 2026-09-04, see ยง10.7 (AGP 9.1.0, Gradle 9.1.0, Compose BOM 2026.04.01) — **not yet compiled/tested**, budget a full click-through
+- [ ] Regenerate and commit `gradle/wrapper/gradle-wrapper.jar` to match the Gradle 9.1.0 `distributionUrl` bump (ยง10.7) — the jar itself isn't hand-edited, needs a local `gradle wrapper --gradle-version 9.1.0` run
+- [ ] Verify edge-to-edge display isn't obscuring content on any screen now that API 36 enforces it unconditionally (ยง10.7) — needs an actual device/emulator check, not just a successful build
+- [x] ~~Add a way to hide/reveal account balances rather than always showing them~~ — done 2026-09-04, see ยง10.8
 
 ---
 
@@ -972,6 +976,9 @@ access + a validation step server-side.
 | 2026-09-04 | First-launch onboarding built as a fixed 3-page flow with a plain enum + Next buttons, no pager library | Consistent with the project's recurring preference for plain Compose over an unfamiliar library's exact API (same reasoning as the Canvas-based Charts screen over Vico) — three fixed pages don't need a pager's swipe/animation machinery. |
 | 2026-09-04 | Onboarding tracks "has seen the disclosure," not "has granted the permission" | Forcing the full 3-page flow again on every launch until the user grants notification access would be worse than the existing `OnboardingBanner` reminder it falls back to after a "Skip for now." The disclosure only needs to happen once; the reminder can be ongoing and lighter-weight. |
 | 2026-09-04 | Battery-settings onboarding step opens App Info, not a direct `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` dialog | The direct exemption intent requires declaring `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` in the manifest, itself a Play Console-restricted permission needing a core-functionality justification. Battery exemption is a reliability nice-to-have here, not core functionality, so it wouldn't clear that bar — opening the plain App Info screen achieves the same end for a motivated user with zero manifest/Play-declaration risk. |
+| 2026-09-04 | Compose BOM bumped to 2026.04.01, not the newest available (2026.08.00) | The newer BOM requires compileSdk 37/AGP 9.1.1+, beyond what Play's actual deadline requires (API 36). Matching the exact requirement rather than chasing the latest BOM avoided an unnecessary, unrequested second SDK-level jump bundled into the same change. |
+| 2026-09-04 | `androidx.fragment:fragment-ktx` left unbumped during the AGP 9.1.0/API 36 migration | This app only uses `FragmentActivity` for `BiometricPrompt` compatibility, not fragment transactions — it isn't in the predictive-back-critical path the way `activity-compose` is, so bumping it preemptively without a specific reason would have been an unnecessary extra variable in an already large toolchain change. |
+| 2026-09-04 | Account balances hidden by default (`BalanceVisibilityStore`), revealed via an explicit eye-icon tap, rather than always shown | A bank/account balance is a "how much money do I have in total" figure, materially more sensitive than any single transaction amount — masking by default protects against casual shoulder-surfing without requiring a settings trip to turn the feature off entirely. |
 
 ---
 
@@ -1211,6 +1218,85 @@ let a new personal-account app reach Production until the 12-tester/
 once you have a signed release build, rather than waiting until
 everything else on this checklist is also done — the testing clock only
 starts once real testers are opted in and using it.
+
+### 10.7 Target API 36 / AGP 9.1.0 bump (2026-09-04)
+
+Real Play Console feedback (a first Internal Testing upload) confirmed
+what ยง10.1 flagged: Internal/Closed Testing tracks are **not** blocked by
+the target-API-35 error — only Production publishing is. That upload also
+surfaced a separate, more urgent issue (SQLCipher's 16 KB page size
+incompatibility — see ยง10.6 once that fix lands) that got prioritized
+first. This section is the deferred API 36 work itself.
+
+**Versions chosen, and why** (cross-referenced against official sources
+this session, not assumed):
+
+| Component | Before | After | Why this exact version |
+|---|---|---|---|
+| AGP | 8.5.2 | **9.1.0** | AGP 9.0.0 was the first version to support compileSdk 36 at all; 9.1.0 is the documented stable AGP/Gradle pairing per developer.android.com's own compatibility table |
+| Gradle | 8.7 | **9.1.0** | AGP 9.x has a hard requirement on Gradle 9.x — not optional, confirmed in AGP's own release notes |
+| compileSdk / targetSdk | 35 | **36** | Exactly what Play's Aug 31, 2026 deadline requires — deliberately not 37 |
+| Compose BOM | 2024.02.00 | **2026.04.01** | The last BOM still compileSdk-36-safe. The next one (2026.08.00, Compose 1.12) requires compileSdk **37** and AGP 9.1.1+ — chasing the newest BOM would have silently dragged this project into a higher, not-yet-required SDK target as a side effect |
+| androidx.activity / activity-compose | 1.8.2 | **1.13.0** | Needed for correct predictive-back integration under API 36 (see below) |
+| androidx.fragment:fragment-ktx | 1.6.2 | **unchanged** | Deliberately left alone — this app only uses `FragmentActivity` for `BiometricPrompt` compatibility, not fragment transactions, so it isn't in the API-36/predictive-back-critical path the way `activity-compose` is. Bump later only if a real build actually demands it. |
+| Kotlin | 2.3.20 | **unchanged** | AGP 9.1.0 bundles Kotlin Gradle Plugin 2.2.10 by default, but this project already pins its own newer explicit version (2.3.20) via `buildscript.dependencies`, which should be fine as an override |
+
+**Two Android 16 behavior changes worth knowing about, not just the SDK
+number bump**:
+
+1. **Predictive back / `onBackPressed()` removal** — apps targeting API 36
+   no longer receive `Activity.onBackPressed()` or `KEYCODE_BACK` at all.
+   This app never overrode `onBackPressed()` — it already used
+   `androidx.activity.compose.BackHandler` throughout (built on
+   `OnBackPressedDispatcher`, the mechanism predictive back actually
+   integrates with), so the app's own back-handling code needed no
+   changes. Added `android:enableOnBackInvokedCallback="true"` to
+   `AndroidManifest.xml`'s `<application>` tag, which is what actually
+   opts the app into the system's predictive-back animation/dispatch path.
+2. **Edge-to-edge enforcement** — apps targeting Android 15+ can no longer
+   opt out of edge-to-edge display; the system draws behind the status/
+   navigation bars unconditionally. This app's `Scaffold`-based screens
+   generally handle their own insets via Material3's defaults, but this
+   has **not been visually verified** — a real device/emulator click-
+   through (same as the practice already established after the Play
+   Billing/AdMob dependency bump) needs to specifically check that no
+   content is obscured behind system bars on every screen, not just that
+   the app builds and launches.
+
+**What was NOT verified, and can't be from this environment**: none of
+this was compiled. This sandbox has no Android SDK/Gradle network access
+— every version number above was cross-checked against multiple official/
+authoritative sources (developer.android.com's AGP compatibility table,
+the Jetpack Compose release blog, androidx release notes) rather than
+recalled from training data, but that is not a substitute for an actual
+`./gradlew assembleDebug` run. This is a bigger-than-usual toolchain
+change (AGP major version, Gradle major version, Compose BOM two years
+newer) — budget real time for a full click-through afterward, the same
+way the Kotlin 2.3.20/Room 2.8.4/AGP 8.5.2 bump was handled originally.
+
+**Also needed, not a code change**: the committed `gradle-wrapper.jar`
+binary must match the new `distributionUrl`. Per this project's own setup
+notes (ยง4), the wrapper jar isn't hand-generated — regenerate it with a
+locally installed Gradle โ‰ฅ9.1: `gradle wrapper --gradle-version 9.1.0`,
+then commit the updated `gradle/wrapper/gradle-wrapper.jar` alongside this
+change. Android Studio can also do this automatically if it detects the
+version mismatch when the project is opened.
+
+### 10.8 Account balance visibility toggle (2026-09-04)
+
+Not a Play Store requirement — a privacy improvement requested directly.
+The "Account balances" section on `ChartsScreen` (ยง2.11) shows the latest
+parsed bank/account balance per source, which is more sensitive than any
+single transaction amount (a total-money-available figure, not one
+purchase). New `BalanceVisibilityStore` (plain `SharedPreferences`,
+matching the existing preference-store pattern) defaults balances to
+**hidden** — masked as `₹••••••` — with an eye icon next to the section
+header to reveal/hide them, persisted across sessions. Scoped specifically
+to this summary section; the separate "Balance after: ₹X" line shown per
+transaction in `TransactionDetailDialog` (a historical record tied to one
+specific message, not a live "how much money do I have" figure) was left
+as-is — a reasonable follow-up if the same masking is wanted there too,
+but not assumed to be the same request.
 
 To download the app
 python3 -m http.server 8000 --directory app/build/outputs/apk/debug

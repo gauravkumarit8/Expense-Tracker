@@ -6,13 +6,18 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.autoexpensetracker.util.ReminderNotificationHelper
 import com.autoexpensetracker.worker.ReminderCheckWorker
-import net.sqlcipher.database.SQLiteDatabase
 import java.util.concurrent.TimeUnit
 
 class ExpenseTrackerApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        SQLiteDatabase.loadLibs(this) // load native SQLCipher libs once
+        // sqlcipher-android (migrated 2026-09-04 from the deprecated
+        // android-database-sqlcipher, see REQUIREMENTS.md ยง10.6) loads its
+        // native library via the plain JVM mechanism instead of a
+        // library-specific static method — simpler, and also what lets
+        // SplitInstallHelper.loadLibrary or similar be swapped in later if
+        // this app ever needs on-demand module delivery.
+        System.loadLibrary("sqlcipher")
 
         ReminderNotificationHelper.ensureChannel(this)
 

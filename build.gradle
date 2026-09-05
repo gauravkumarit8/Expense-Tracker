@@ -6,7 +6,17 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath "com.android.tools.build:gradle:8.5.2"
+        // 2026-09-04: AGP 8.5.2 -> 9.1.0 — required to raise compileSdk to
+        // 36 (Android 16), which Google Play now mandates for any new app
+        // submission (AGP 9.0.0 was the first version to support
+        // compileSdk 36 at all; 9.1.0 is the documented stable pairing
+        // with Gradle 9.1.0, per developer.android.com's AGP compatibility
+        // table). AGP 9.x REQUIRES Gradle 9.x — see
+        // gradle/wrapper/gradle-wrapper.properties, bumped alongside this.
+        // See REQUIREMENTS.md ยง10.7 for the full reasoning and what was
+        // and wasn't verified by an actual build (this project's sandbox
+        // has no Android SDK/Gradle network access to compile with).
+        classpath "com.android.tools.build:gradle:9.1.0"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
         classpath "org.jetbrains.kotlin:kotlin-serialization:$kotlin_version"
         // Required separately since Kotlin 2.0 — Compose compiler is no

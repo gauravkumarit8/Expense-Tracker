@@ -27,12 +27,15 @@ if (hasSigningConfig) {
 
 android {
     namespace 'com.autoexpensetracker'
-    compileSdk 35
+    // 2026-09-04: 35 -> 36 (Android 16) — Google Play requires new
+    // submissions/updates to target API 36 as of Aug 31, 2026. Requires
+    // AGP >= 9.0.0 (see root build.gradle). See REQUIREMENTS.md ยง10.7.
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.autoexpensetracker"
         minSdk 24
-        targetSdk 35
+        targetSdk 36
         versionCode 1
         versionName "0.1.0"
     }
@@ -88,8 +91,16 @@ dependencies {
     implementation "androidx.core:core-ktx:1.12.0"
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
     implementation "androidx.lifecycle:lifecycle-runtime-compose:2.7.0"
-    implementation "androidx.activity:activity-compose:1.8.2"
-    implementation platform("androidx.compose:compose-bom:2024.02.00")
+    // 2026-09-04: 1.8.2 -> 1.13.0 — needed for correct predictive-back
+    // integration under API 36 (see AndroidManifest.xml's
+    // enableOnBackInvokedCallback and REQUIREMENTS.md ยง10.7).
+    implementation "androidx.activity:activity-compose:1.13.0"
+    // 2026-09-04: 2024.02.00 -> 2026.04.01 — the last Compose BOM still
+    // compatible with compileSdk 36 (the following BOM, 2026.08.00,
+    // requires compileSdk 37 / AGP 9.1.1+, which is beyond what Play
+    // actually requires right now — deliberately not chasing the newest
+    // BOM here, just the one that satisfies the real deadline).
+    implementation platform("androidx.compose:compose-bom:2026.04.01")
     implementation "androidx.compose.ui:ui"
     implementation "androidx.compose.ui:ui-graphics"
     implementation "androidx.compose.material3:material3"

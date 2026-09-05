@@ -31,7 +31,17 @@
          Safety form implications this has. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 2026-09-04: enableOnBackInvokedCallback is required for correct
+         predictive-back behavior once targeting API 36 (Android 16) — apps
+         targeting API 36 no longer receive Activity.onBackPressed()/
+         KEYCODE_BACK at all. This app never overrode onBackPressed() (it
+         already used androidx.activity.compose.BackHandler throughout,
+         which is built on OnBackPressedDispatcher), but this flag is what
+         actually opts the app into the system's predictive-back
+         animation/dispatch path rather than the legacy one. See
+         REQUIREMENTS.md ยง10.7. -->
     <application
+        android:enableOnBackInvokedCallback="true"
         android:name=".ExpenseTrackerApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
