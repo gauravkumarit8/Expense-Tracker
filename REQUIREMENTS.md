@@ -787,6 +787,7 @@ chmod +x gradlew        # first time only, after gradle wrapper is generated —
 ./gradlew test                      # unit tests
 ./gradlew connectedAndroidTest      # instrumented tests (needs device/emulator)
 ./gradlew lint                      # static analysis
+./gradlew bundleRelease             # to create aab file to upload on play store
 ```
 
 > **Note on the Gradle wrapper**: this scaffold does not include the
