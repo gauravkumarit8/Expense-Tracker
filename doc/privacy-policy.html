@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Auto Expense Tracker</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
+  h1 { font-size: 1.8em; }
+  h2 { font-size: 1.25em; margin-top: 2em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+  .updated { color: #666; font-size: 0.9em; }
+  ul { padding-left: 1.3em; }
+  code { background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy — Auto Expense Tracker</h1>
+<p class="updated">Last updated: September 5, 2026</p>
+
+<p>Auto Expense Tracker ("the app") is an Android app that helps you track
+your spending automatically. This page explains what information the app
+accesses, what it does with it, and what it never does. We wrote this to
+be accurate and specific to how the app actually works, not generic
+boilerplate.</p>
+
+<h2>The short version</h2>
+<p>Your financial transaction data is processed and stored <strong>only on
+your device</strong>, encrypted. We do not operate a server, and your
+transaction history is never uploaded anywhere, ever. The only network
+activity the app performs is talking to Google's own services — for
+optional ads, optional subscriptions, and update checks — none of which
+involve your financial data.</p>
+
+<h2>What the app reads</h2>
+<p>With your permission (Android's "Notification Access" setting, which
+you must explicitly grant and can revoke at any time), the app reads the
+text of notifications from your banking, UPI, and default messaging apps,
+specifically to detect transaction alerts (e.g. "Rs.500 debited...",
+"You received Rs.1200..."). It does not read notifications from any other
+app — social media, chat apps, or anything unrelated to financial
+transaction alerts.</p>
+
+<p>From a matching notification, the app extracts only:</p>
+<ul>
+  <li>The transaction amount</li>
+  <li>Whether it was money sent or received</li>
+  <li>The date/time</li>
+  <li>The counterparty name or account, where present in the message</li>
+  <li>The account balance, where the message happens to include one</li>
+</ul>
+
+<p>The original notification text itself is <strong>discarded immediately</strong>
+after these details are extracted. It is never saved to disk, never
+logged, and never leaves your device.</p>
+
+<p>The app does <strong>not</strong> use SMS permissions of any kind. It
+never requests <code>READ_SMS</code> or <code>RECEIVE_SMS</code>.
+Notification Access is the only mechanism used to detect transactions.</p>
+
+<h2>What the app stores</h2>
+<p>The structured details above (amount, direction, date, counterparty,
+category, your own notes/tags) are stored in an encrypted database on
+your device, using industry-standard encryption (SQLCipher) with a key
+held in your device's own secure hardware (Android Keystore) where
+available. This data is never transmitted off your device — there is no
+backend server for this app to send it to.</p>
+
+<p>You can export your data at any time (JSON backup, or CSV for
+spreadsheet use) directly to a location you choose on your own device or
+cloud storage — this is an action you take deliberately; the app does not
+do this automatically or without your action.</p>
+
+<p>You can permanently delete all app data at any time from Settings.</p>
+
+<h2>What we never do</h2>
+<ul>
+  <li>We do not operate a server that receives your transaction data.</li>
+  <li>We do not sell, share, or transmit your financial data to any third party.</li>
+  <li>We do not use your transaction data for advertising targeting.</li>
+  <li>We do not read notifications from apps unrelated to financial transactions.</li>
+</ul>
+
+<h2>Data that Google's own services process</h2>
+<p>The app uses a small number of Google services, which is the only
+network access the app has. This is separate from, and does not involve,
+your financial transaction data:</p>
+
+<ul>
+  <li><strong>Google AdMob</strong> (for the free tier's banner ads):
+  processes an advertising identifier for ad delivery, subject to your
+  ad-consent choice (EU/UK users are shown a consent form on first launch,
+  per Google's requirements, and can change this choice any time from
+  Settings → Privacy & Ad Consent).</li>
+  <li><strong>Google Play Billing</strong> (for the optional Pro
+  subscription): processes your purchase/subscription status. Payment
+  details are handled entirely by Google Play — this app never sees or
+  stores your payment information.</li>
+  <li><strong>Google Play's in-app update and in-app review features</strong>:
+  check for app updates and, occasionally, prompt for a Play Store rating.
+  Standard Google Play services, not custom infrastructure of ours.</li>
+</ul>
+
+<p>See Google's own Privacy Policy for how these Google services handle
+data: <a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></p>
+
+<h2>Permissions the app uses, and why</h2>
+<ul>
+  <li><strong>Notification access</strong> — to detect bank/UPI transaction alerts, as described above.</li>
+  <li><strong>Notifications (POST_NOTIFICATIONS)</strong> — to show you bill reminders and unusual-spending alerts you've configured.</li>
+  <li><strong>Biometric/fingerprint</strong> — only if you turn on the optional app lock feature, to unlock the app.</li>
+  <li><strong>Internet &amp; network state</strong> — used only for the Google services described above; never for transmitting your transaction data.</li>
+</ul>
+
+<h2>Children's privacy</h2>
+<p>This app is a personal finance utility intended for general adult use
+and is not directed at children. We do not knowingly collect information
+from children.</p>
+
+<h2>Your choices</h2>
+<ul>
+  <li>You can grant or revoke Notification Access at any time from Android Settings.</li>
+  <li>You can change your ad-consent choice at any time from the app's Settings screen.</li>
+  <li>You can export or permanently delete all your data at any time from the app's Settings screen.</li>
+</ul>
+
+<h2>Changes to this policy</h2>
+<p>If this policy changes, we'll update the "Last updated" date above.
+Continued use of the app after a change means you accept the updated
+policy.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy or the app's data practices can be sent to:
+<strong>gaurav954624@gmail.com</strong></p>
+
+</body>
+</html>
