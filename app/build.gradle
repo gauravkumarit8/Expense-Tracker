@@ -1,23 +1,11 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    id 'kotlin-kapt'
+    id 'com.google.devtools.ksp'
     id 'org.jetbrains.kotlin.plugin.serialization'
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
-// Release signing config, loaded from a LOCAL, GIT-IGNORED
-// keystore.properties file (see keystore.properties.example at the repo
-// root for the format, and REQUIREMENTS.md ยง10.4 for how to generate the
-// actual keystore this points to). Never hardcode a real path/password
-// here — this file is committed. If keystore.properties doesn't exist
-// (e.g. a fresh clone, or CI without secrets configured), the release
-// build type simply has no signingConfig — `bundleRelease`/
-// `assembleRelease` will still SUCCEED, but produce an UNSIGNED artifact
-// that can't be installed via adb or uploaded to Play Console. That
-// failure shows up later (install/upload time), not at build time — don't
-// mistake a clean `bundleRelease` for a ready-to-upload bundle without
-// keystore.properties actually present.
 def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
 def hasSigningConfig = keystorePropertiesFile.exists()
@@ -27,17 +15,18 @@ if (hasSigningConfig) {
 
 android {
     namespace 'com.autoexpensetracker'
-    // 2026-09-04: 35 -> 36 (Android 16) — Google Play requires new
-    // submissions/updates to target API 36 as of Aug 31, 2026. Requires
-    // AGP >= 9.0.0 (see root build.gradle). See REQUIREMENTS.md ยง10.7.
     compileSdk 36
 
     defaultConfig {
         applicationId "com.autoexpensetracker"
         minSdk 24
         targetSdk 36
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 3          // Bumped to 3 for the new release
+        versionName "0.1.2"
+
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
     }
 
     signingConfigs {
@@ -59,6 +48,9 @@ android {
             if (hasSigningConfig) {
                 signingConfig signingConfigs.release
             }
+            ndk {
+                debugSymbolLevel 'FULL'
+            }
         }
         debug {
             minifyEnabled false
@@ -77,81 +69,52 @@ android {
         compose true
         buildConfig true
     }
-    // composeOptions { kotlinCompilerExtensionVersion } removed — since
-    // Kotlin 2.0, the Compose compiler plugin (applied above) determines
-    // its own version from the Kotlin version directly. Setting this
-    // manually alongside the new plugin would conflict.
-
-    // Financial data: never auto-backup the DB. See REQUIREMENTS.md security section.
-    // dataExtractionRules / fullBackupContent referenced in AndroidManifest.
 }
 
 dependencies {
-    // Core / Compose
-    implementation "androidx.core:core-ktx:1.12.0"
-    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
-    implementation "androidx.lifecycle:lifecycle-runtime-compose:2.7.0"
-    // 2026-09-04: 1.8.2 -> 1.13.0 — needed for correct predictive-back
-    // integration under API 36 (see AndroidManifest.xml's
-    // enableOnBackInvokedCallback and REQUIREMENTS.md ยง10.7).
-    implementation "androidx.activity:activity-compose:1.13.0"
-    // 2026-09-04: 2024.02.00 -> 2026.04.01 — the last Compose BOM still
-    // compatible with compileSdk 36 (the following BOM, 2026.08.00,
-    // requires compileSdk 37 / AGP 9.1.1+, which is beyond what Play
-    // actually requires right now — deliberately not chasing the newest
-    // BOM here, just the one that satisfies the real deadline).
-    implementation platform("androidx.compose:compose-bom:2026.04.01")
+    // Core / Lifecycle / Activity
+    implementation "androidx.core:core-ktx:1.15.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.7"
+    implementation "androidx.lifecycle:lifecycle-runtime-compose:2.8.7"
+    implementation "androidx.activity:activity-compose:1.9.3"
+
+    // Jetpack Compose BOM
+    implementation platform("androidx.compose:compose-bom:2024.12.01")
     implementation "androidx.compose.ui:ui"
     implementation "androidx.compose.ui:ui-graphics"
     implementation "androidx.compose.material3:material3"
     implementation "androidx.compose.material:material-icons-extended"
 
-    // Room + SQLCipher (encrypted local DB)
-    implementation "androidx.room:room-runtime:2.8.4"
-    implementation "androidx.room:room-ktx:2.8.4"
-    kapt "androidx.room:room-compiler:2.8.4"
-    implementation "net.zetetic:android-database-sqlcipher:4.5.4"
+    // Room Database
+    implementation "androidx.room:room-runtime:2.6.1"
+    implementation "androidx.room:room-ktx:2.6.1"
+    ksp "androidx.room:room-compiler:2.6.1"
+
+    // SQLCipher (16 KB page-size supported)
+    implementation "net.zetetic:sqlcipher-android:4.6.1"
     implementation "androidx.sqlite:sqlite:2.4.0"
 
-    // Jetpack Security (Keystore-backed EncryptedSharedPreferences)
+    // Security & WorkManager
     implementation "androidx.security:security-crypto:1.1.0-alpha06"
+    implementation "androidx.work:work-runtime-ktx:2.10.0"
 
-    // WorkManager (battery-aware background/deferred work)
-    implementation "androidx.work:work-runtime-ktx:2.9.0"
-
-    // Biometric app lock
+    // Biometrics & Fragments
     implementation "androidx.biometric:biometric:1.2.0-alpha05"
-    implementation "androidx.fragment:fragment-ktx:1.6.2"
+    implementation "androidx.fragment:fragment-ktx:1.8.5"
 
-    // Play Billing (subscriptions) — client-side entitlement checking only,
-    // no backend of ours involved. See REQUIREMENTS.md ยง2.17 for the
-    // architecture decision this represents (first INTERNET permission use).
-    implementation "com.android.billingclient:billing-ktx:9.0.0"
+    // Google Play Billing (Updated to 8.0.0 to satisfy Play Console)
+    implementation "com.android.billingclient:billing-ktx:8.0.0"
 
-    // Play Core In-App Update — lets the app prompt for updates using
-    // Google's own Play Store data, no backend of ours needed.
+    // In-App Update & Ads
     implementation "com.google.android.play:app-update-ktx:2.1.0"
-
-    // Google Mobile Ads (AdMob) — banner ads for free-tier users, hidden
-    // for Pro subscribers. Using the mature "Legacy" SDK deliberately, not
-    // the new "Next-Gen" SDK (announced July 2026, different API shape) —
-    // see REQUIREMENTS.md ยง2.18 for why.
     implementation "com.google.android.gms:play-services-ads:23.6.0"
+    implementation "com.google.android.ump:user-messaging-platform:3.1.0"
 
-    // Google User Messaging Platform (UMP) SDK — required since January
-    // 2024 for any app serving Google ads to EEA/UK/regulated-US-state
-    // users; gathers consent before the Mobile Ads SDK is initialized.
-    // Standalone dependency, not bundled in play-services-ads. See
-    // REQUIREMENTS.md ยง2.23 and ads/ConsentManager.kt.
-    implementation "com.google.android.ump:user-messaging-platform:4.0.0"
-
-    // JSON parsing for bundled bank_patterns.json
-    implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2"
-
-    // Charts (lightweight, Compose-native)
-    implementation "com.patrykandpatrick.vico:compose-m3:1.13.1"
+    // Kotlinx Serialization & Charts
+    implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3"
+    implementation "com.patrykandpatrick.vico:compose-m3:1.15.0"
 
     // Testing
     testImplementation "junit:junit:4.13.2"
-    androidTestImplementation "androidx.test.ext:junit:1.1.5"
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
 }

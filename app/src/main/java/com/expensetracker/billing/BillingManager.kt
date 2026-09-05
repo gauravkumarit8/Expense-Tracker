@@ -12,16 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * Client-side-only subscription entitlement checking — no backend of ours.
  * Google Play is the system of record for "is this user currently
  * subscribed"; we query it directly via BillingClient rather than
- * maintaining our own subscriber database. See REQUIREMENTS.md ยง2.17 for
- * the full reasoning and the tradeoffs of this choice vs. a full
- * server-side receipt-validation + Real-time Developer Notifications setup.
- *
- * PRODUCT_ID_MONTHLY / PRODUCT_ID_YEARLY must be created in Play Console
- * under Monetization > Products > Subscriptions with these exact IDs
- * before purchases will work. Subscriptions cannot be tested via sideloaded
- * debug builds — the app must be uploaded to at least the Internal Testing
- * track, and the testing Google account must be added as a license tester
- * in Play Console. This is a hard Google Play constraint, not a bug here.
+ * maintaining our own subscriber database.
  */
 class BillingManager(context: Context) : PurchasesUpdatedListener {
 
@@ -57,15 +48,12 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
             }
 
             override fun onBillingServiceDisconnected() {
-                // BillingClient can auto-reconnect on the next call; nothing
-                // to do here beyond letting queries fail gracefully.
+                // BillingClient can auto-reconnect on the next call
             }
         })
     }
 
-    /** Re-checks current entitlement against Google Play. Call on app start
-     *  and after any purchase flow completes — Play is always the source of
-     *  truth, never a locally cached flag alone. */
+    /** Re-checks current entitlement against Google Play. */
     fun refreshEntitlement() {
         val params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
@@ -81,8 +69,7 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
 
             _isPro.value = activeSub != null
 
-            // Purchases must be acknowledged within 3 days or Google
-            // auto-refunds them and revokes access.
+            // Purchases must be acknowledged within 3 days
             if (activeSub != null && !activeSub.isAcknowledged) {
                 val ackParams = AcknowledgePurchaseParams.newBuilder()
                     .setPurchaseToken(activeSub.purchaseToken)
@@ -105,16 +92,14 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
         )
         val params = QueryProductDetailsParams.newBuilder().setProductList(products).build()
 
-        billingClient.queryProductDetailsAsync(params) { result, productDetailsResult ->
+        billingClient.queryProductDetailsAsync(params) { result, queryProductDetailsResult ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                _productDetails.value = productDetailsResult.productDetailsList
+                _productDetails.value = queryProductDetailsResult.productDetailsList ?: emptyList()
             }
         }
     }
 
-    /** Launches the Play purchase flow for the given product. Call
-     *  refreshEntitlement() from the PurchasesUpdatedListener callback
-     *  (handled internally here) once the flow completes. */
+    /** Launches the Play purchase flow for the given product. */
     fun launchPurchaseFlow(activity: Activity, product: ProductDetails) {
         val offerToken = product.subscriptionOfferDetails?.firstOrNull()?.offerToken ?: return
 
@@ -134,10 +119,6 @@ class BillingManager(context: Context) : PurchasesUpdatedListener {
         if (result.responseCode == BillingClient.BillingResponseCode.OK) {
             refreshEntitlement()
         }
-        // Cancelled (BillingResponseCode.USER_CANCELED) and error cases are
-        // silently ignored here — the purchase UI simply doesn't change,
-        // which is the correct behavior (no error dialog needed for a
-        // deliberate cancel).
     }
 
     fun endConnection() {
