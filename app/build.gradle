@@ -21,8 +21,8 @@ android {
         applicationId "com.autoexpensetracker"
         minSdk 24
         targetSdk 36
-        versionCode 3          // Bumped to 3 for the new release
-        versionName "0.1.2"
+        versionCode 6       // Bumped to 3 for the new release
+        versionName "0.1.5"
 
         ndk {
             abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"

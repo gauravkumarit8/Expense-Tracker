@@ -126,7 +126,13 @@ class TransactionParser(context: Context) {
     }
 
     companion object {
-        private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
+        // 2026-09-06 fix: added optional ":" alongside the existing optional
+        // "." after "rs" — a real Union Bank sample uses "Avl Bal Rs:15259.20"
+        // (colon, not period), which the original rs\.? alternative couldn't
+        // match at all, silently dropping balanceAfter for that bank's
+        // messages. Same colon gap existed in bank_patterns.json's Union
+        // Bank amount regexes, fixed alongside this.
+        private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?:?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
         private const val PAID_YOU_REGEX = "(?i)^(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z ]{2,60}?)\\s+paid you\\s+(?:rs\\.?|inr|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
     }
 

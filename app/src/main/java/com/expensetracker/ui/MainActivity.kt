@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -317,7 +318,14 @@ class MainActivity : FragmentActivity() {
 
                 val isPro by billingManager.isPro.collectAsStateWithLifecycle(initialValue = false)
                 val proProducts by billingManager.productDetails.collectAsStateWithLifecycle(initialValue = emptyList())
+                val activePurchase by billingManager.activePurchase.collectAsStateWithLifecycle(initialValue = null)
                 var showUpgradeDialog by remember { mutableStateOf(false) }
+                // 2026-09-07: separate from showUpgradeDialog — tapping the
+                // Membership row while already Pro used to incorrectly
+                // reopen the "Upgrade to Pro" dialog (nonsensical for an
+                // existing subscriber). This drives a distinct
+                // ManageSubscriptionDialog instead, see REQUIREMENTS.md ยง12.
+                var showManageSubscriptionDialog by remember { mutableStateOf(false) }
                 var pendingGatedAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
                 var showUpdateBanner by remember { mutableStateOf(false) }
@@ -564,7 +572,7 @@ class MainActivity : FragmentActivity() {
                                     }
                                 },
                                 isPro = isPro,
-                                onUpgradeClick = { showUpgradeDialog = true },
+                                onUpgradeClick = { if (isPro) showManageSubscriptionDialog = true else showUpgradeDialog = true },
                                 appLockEnabled = appLockEnabled,
                                 canUseAppLock = AppLockManager.canUseAppLock(context),
                                 onAppLockToggle = { wantEnabled ->
@@ -677,6 +685,21 @@ class MainActivity : FragmentActivity() {
                             products = proProducts,
                             onDismiss = { showUpgradeDialog = false; pendingGatedAction = null },
                             onSelectProduct = { product -> billingManager.launchPurchaseFlow(this@MainActivity, product) }
+                        )
+                    }
+                    if (showManageSubscriptionDialog) {
+                        ManageSubscriptionDialog(
+                            activeProductId = activePurchase?.products?.firstOrNull(),
+                            products = proProducts,
+                            onSwitchPlan = { newProduct ->
+                                billingManager.launchPlanChangeFlow(this@MainActivity, newProduct)
+                                showManageSubscriptionDialog = false
+                            },
+                            onManageOnPlayStore = {
+                                context.startActivity(billingManager.manageSubscriptionsIntent())
+                                showManageSubscriptionDialog = false
+                            },
+                            onDismiss = { showManageSubscriptionDialog = false }
                         )
                     }
                     LaunchedEffect(showUpdateBanner) {
@@ -2486,7 +2509,7 @@ private fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit,
         text = {
             Column {
                 Text(
-                    "Support development and unlock CSV export, with more Pro features on the way. No ads, no lending upsells, no data ever leaves your device.",
+                    "Support development and unlock CSV export, backup & restore, and an ad-free experience. No lending upsells, no data ever leaves your device.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(16.dp))
@@ -2496,17 +2519,45 @@ private fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit,
                         style = MaterialTheme.typography.bodySmall, color = Color.Gray
                     )
                 } else {
-                    products.forEach { product ->
+                    // Yearly first, and visually distinguished with a "Best
+                    // Value" badge — a static callout rather than a
+                    // computed percentage, since reliably parsing savings
+                    // out of a locale-formatted price string (e.g. "₹999.00")
+                    // back into a number is fragile across currencies and
+                    // not worth the risk for a cosmetic badge.
+                    val sorted = products.sortedByDescending { it.productId == BillingManager.PRODUCT_ID_YEARLY }
+                    sorted.forEach { product ->
                         val offer = product.subscriptionOfferDetails?.firstOrNull()
-                        val price = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice ?: "—"
+                        val phase = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()
+                        val price = phase?.formattedPrice ?: "—"
+                        val isYearly = product.productId == BillingManager.PRODUCT_ID_YEARLY
+                        val period = if (isYearly) "per year" else "per month"
+
                         Surface(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            shape = RoundedCornerShape(12.dp), color = Color(0xFFF7F7F9),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isYearly) Color(0xFFEDF7ED) else Color(0xFFF7F7F9),
+                            border = if (isYearly) BorderStroke(1.dp, Color(0xFF2E7D32)) else null,
                             onClick = { onSelectProduct(product) }
                         ) {
-                            Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(product.name, fontWeight = FontWeight.Medium)
-                                Text(price, fontWeight = FontWeight.SemiBold)
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                if (isYearly) {
+                                    Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFF2E7D32)) {
+                                        Text(
+                                            "BEST VALUE", color = Color.White, fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text(if (isYearly) "Yearly" else "Monthly", fontWeight = FontWeight.Medium)
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(price, fontWeight = FontWeight.SemiBold)
+                                        Text(period, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    }
+                                }
                             }
                         }
                     }
@@ -2514,5 +2565,71 @@ private fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit,
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Not now") } }
+    )
+}
+
+/**
+ * Reached by tapping the Membership row once already Pro — replaces the
+ * previous (bugged) behavior of reopening UpgradeDialog, which made no
+ * sense for an existing subscriber. See REQUIREMENTS.md ยง12.
+ *
+ * Offers exactly the two things Play Billing actually supports here:
+ * switching to the other plan (in-app, via BillingManager.launchPlanChangeFlow)
+ * and managing/cancelling on Google Play (the only sanctioned way to
+ * cancel — Play Billing has no in-app cancel API for third-party apps by
+ * design).
+ */
+@Composable
+private fun ManageSubscriptionDialog(
+    activeProductId: String?,
+    products: List<ProductDetails>,
+    onSwitchPlan: (ProductDetails) -> Unit,
+    onManageOnPlayStore: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val currentLabel = when (activeProductId) {
+        BillingManager.PRODUCT_ID_MONTHLY -> "Monthly"
+        BillingManager.PRODUCT_ID_YEARLY -> "Yearly"
+        else -> "Pro"
+    }
+    val otherProduct = products.firstOrNull { it.productId != activeProductId }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage Subscription") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = Color(0xFFF9A825))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("You're on the $currentLabel plan", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (otherProduct != null) {
+                    val offer = otherProduct.subscriptionOfferDetails?.firstOrNull()
+                    val price = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice ?: "—"
+                    val otherLabel = if (otherProduct.productId == BillingManager.PRODUCT_ID_YEARLY) "Yearly" else "Monthly"
+                    OutlinedButton(onClick = { onSwitchPlan(otherProduct) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Switch to $otherLabel — $price")
+                    }
+                    Text(
+                        "Takes effect immediately; any remaining time on your current plan is credited toward the new one.",
+                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                    )
+                }
+
+                TextButton(onClick = onManageOnPlayStore, modifier = Modifier.fillMaxWidth()) {
+                    Text("Manage or cancel on Google Play")
+                }
+                Text(
+                    "Opens Google Play's own subscription screen — the only place cancellation happens, so it's always fully in your control.",
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
