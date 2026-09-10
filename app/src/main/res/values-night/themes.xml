@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode counterpart to values/themes.xml — same reasoning, see
+         that file's comment. Matches ui/theme/Theme.kt's DarkColors
+         background so the pre-Compose window and the first Compose frame
+         don't visibly flash between two different dark tones. -->
+    <style name="Theme.ExpenseTracker" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/brand_background_dark</item>
+        <item name="android:statusBarColor">@color/brand_background_dark</item>
+        <item name="android:navigationBarColor">@color/brand_background_dark</item>
+    </style>
+</resources>

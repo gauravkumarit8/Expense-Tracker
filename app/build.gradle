@@ -18,7 +18,8 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId "com.autoexpensetracker"
+        // applicationId "com.autoexpensetracker"
+        applicationId "com.expensetracker"
         minSdk 24
         targetSdk 36
         versionCode 6       // Bumped to 3 for the new release

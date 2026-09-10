@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 2026-09-08: previously the manifest referenced the raw, unstyled
+         android:Theme.Material.Light.NoActionBar directly, with none of
+         its attributes overridden — meaning the brief pre-Compose window
+         (during cold start, before setContent's first frame renders) used
+         the platform's default white/gray, unrelated to this app's green
+         branding. Kept the same platform theme as parent rather than
+         adding a Material Components / AppCompat dependency just for a
+         DayNight base — lower risk given this can't be compile-tested
+         here — but overrode the attributes that actually control what's
+         visible before Compose takes over. See REQUIREMENTS.md ยง13 and
+         ui/theme/Theme.kt for the corresponding Compose-side fix. -->
+    <style name="Theme.ExpenseTracker" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/brand_background_light</item>
+        <item name="android:statusBarColor">@color/brand_green</item>
+        <item name="android:navigationBarColor">@color/brand_background_light</item>
+    </style>
+</resources>

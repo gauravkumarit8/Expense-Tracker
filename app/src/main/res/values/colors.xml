@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches ic_launcher_background.xml / ui/theme/Color.kt's BrandGreen —
+         single source of truth is the launcher icon; this file and Color.kt
+         both just name the same real value, not invent a new one. -->
+    <color name="brand_green">#2E7D32</color>
+    <color name="brand_background_light">#FFFFFF</color>
+    <color name="brand_background_dark">#141614</color>
+</resources>
