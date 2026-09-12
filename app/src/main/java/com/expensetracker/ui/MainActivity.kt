@@ -64,6 +64,10 @@ import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
+import com.autoexpensetracker.review.ReviewHelper
+import com.autoexpensetracker.review.ReviewPromptStore
+import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+import com.autoexpensetracker.util.BalanceVisibilityStore
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -295,7 +299,7 @@ class MainActivity : FragmentActivity() {
         }
 
         setContent {
-            MaterialTheme {
+            ExpenseTrackerTheme {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
 
@@ -331,6 +335,21 @@ class MainActivity : FragmentActivity() {
                 var showUpdateBanner by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
                     appUpdateHelper.checkForUpdate(updateFlowLauncher, onUpdateAvailable = { showUpdateBanner = true })
+                }
+
+                // Ask for a review at most once per app open, only once
+                // ReviewPromptStore's criteria are met (real auto-captured
+                // usage, respecting a cooldown and a lifetime cap — see
+                // that file for the policy). Deliberately not tied to any
+                // particular screen or action — asking right after a
+                // "moment of delight" (e.g. right after a capture) would be
+                // better, but that moment happens in a background
+                // WorkManager job with no Activity to launch the flow from,
+                // so the next app open is the earliest safe opportunity.
+                LaunchedEffect(Unit) {
+                    if (ReviewPromptStore.isEligibleForPrompt(context)) {
+                        ReviewHelper.maybeRequestReview(this@MainActivity)
+                    }
                 }
 
                 /** Runs [action] immediately if Pro, otherwise shows the
@@ -1856,6 +1875,16 @@ private fun ManualEntryDialog(onDismiss: () -> Unit, onSave: (Transaction) -> Un
 
 @Composable
 private fun ChartsScreen(allTransactions: List<Transaction>) {
+    // BalanceVisibilityStore already existed but was never read from or
+    // written to anywhere in the UI — the "Account balances" section always
+    // rendered real figures with no way to mask them. Wired up here: state
+    // seeded from the store (defaults hidden, see BalanceVisibilityStore
+    // doc comment), toggled by the eye icon next to the section heading,
+    // and persisted back on every toggle so the choice survives navigating
+    // away and relaunching the app.
+    val context = LocalContext.current
+    var balancesVisible by remember { mutableStateOf(BalanceVisibilityStore.isVisible(context)) }
+
     val now = Calendar.getInstance()
     val startOfMonth = (now.clone() as Calendar).apply {
         set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -1897,12 +1926,30 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
         if (latestBalances.isNotEmpty()) {
             item {
-                Text("Account balances", style = MaterialTheme.typography.titleMedium)
-                Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Account balances", style = MaterialTheme.typography.titleMedium)
+                        Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                    IconButton(onClick = {
+                        balancesVisible = !balancesVisible
+                        BalanceVisibilityStore.setVisible(context, balancesVisible)
+                    }) {
+                        Icon(
+                            if (balancesVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                            contentDescription = if (balancesVisible) "Hide balances" else "Show balances",
+                            tint = Color.Gray
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(10.dp))
             }
             items(latestBalances) { (source, tx) ->
-                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis)
+                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis, visible = balancesVisible)
                 Spacer(modifier = Modifier.height(8.dp))
             }
             item { Spacer(modifier = Modifier.height(20.dp)) }
@@ -1923,7 +1970,7 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
 }
 
 @Composable
-private fun BalanceRow(source: String, balance: Double, asOfMillis: Long) {
+private fun BalanceRow(source: String, balance: Double, asOfMillis: Long, visible: Boolean) {
     val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1931,7 +1978,11 @@ private fun BalanceRow(source: String, balance: Double, asOfMillis: Long) {
                 Text(source, fontWeight = FontWeight.Medium)
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
-            Text("₹${"%.2f".format(balance)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (visible) "₹${"%.2f".format(balance)}" else "₹ • • • • • •",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }

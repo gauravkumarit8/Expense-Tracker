@@ -8,6 +8,7 @@ import com.autoexpensetracker.BuildConfig
 import com.autoexpensetracker.data.AppDatabase
 import com.autoexpensetracker.data.InsertOutcome
 import com.autoexpensetracker.parser.TransactionParser
+import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.util.UnusualSpendDetector
 
 /**
@@ -50,6 +51,7 @@ class ParseAndStoreWorker(
             is InsertOutcome.Inserted -> {
                 if (outcome.id > 0) {
                     UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = outcome.id))
+                    ReviewPromptStore.recordCapturedTransaction(applicationContext)
                 }
             }
             is InsertOutcome.ExactDuplicateSkipped -> {

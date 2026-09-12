@@ -37,9 +37,18 @@ involve your financial data.</p>
 you must explicitly grant and can revoke at any time), the app reads the
 text of notifications from your banking, UPI, and default messaging apps,
 specifically to detect transaction alerts (e.g. "Rs.500 debited...",
-"You received Rs.1200..."). It does not read notifications from any other
-app — social media, chat apps, or anything unrelated to financial
-transaction alerts.</p>
+"You received Rs.1200...").</p>
+
+<p>Banks send these alerts from a registered sender code (e.g. "HDFCBK"),
+not a normal app or contact name. To detect alerts from banks that aren't
+on our known-app list, the app also checks the <em>sender name</em> of
+notifications from apps outside that list against the pattern used by
+these registered bank codes. Only the sender name is checked for such
+apps — the message text itself is not read unless the sender name matches
+this bank-code pattern. If it doesn't match, nothing about that
+notification is stored, logged, or leaves your device. The app does not
+read notification content from social media, chat apps, or anything
+unrelated to financial transaction alerts.</p>
 
 <p>From a matching notification, the app extracts only:</p>
 <ul>

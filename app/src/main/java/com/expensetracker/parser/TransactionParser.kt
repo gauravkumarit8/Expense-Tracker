@@ -40,6 +40,21 @@ class TransactionParser(context: Context) {
             return null
         }
 
+        // 2b. Must also reference an account/payment context, not just a
+        // direction word. "credited"/"received"/"paid" alone are common
+        // outside banking too — a telecom recharge confirmation
+        // ("recharge... successfully credited to your Airtel number") or
+        // an e-commerce order confirmation ("we have received your order
+        // of amount INR 660") both contain a transactionKeyword but are
+        // not transaction alerts, and were previously misparsed as money
+        // received. Real bank/UPI alerts consistently reference an
+        // account, card, or UPI context; recharge/order confirmations
+        // essentially never do. See REQUIREMENTS.md Decision Log
+        // 2026-09-12 (false positives found via real sample messages).
+        if (ACCOUNT_CONTEXT_KEYWORDS.none { lower.contains(it) }) {
+            return null
+        }
+
         val hash = sha256(text)
 
         // Special case: "X paid you ₹Y" phrasing (seen from GPay-style
@@ -97,8 +112,13 @@ class TransactionParser(context: Context) {
             Direction.UNKNOWN -> null
         }
 
-        val amountStr = match?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+        var amountStr = match?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
         val counterparty = match?.groupValues?.getOrNull(2)
+
+        if (amountStr == null && direction != Direction.UNKNOWN) {
+            amountStr = safeFind(FALLBACK_AMOUNT_REGEX, text)
+                ?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+        }
 
         val amount = amountStr?.replace(",", "")?.toDoubleOrNull()
         val trimmedCounterparty = counterparty?.trim()?.takeIf { it.isNotBlank() }
@@ -134,6 +154,28 @@ class TransactionParser(context: Context) {
         // Bank amount regexes, fixed alongside this.
         private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?:?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
         private const val PAID_YOU_REGEX = "(?i)^(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z ]{2,60}?)\\s+paid you\\s+(?:rs\\.?|inr|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
+
+        // Real bank/UPI alerts almost always reference one of these; a
+        // recharge or order confirmation almost never does. Lowercase —
+        // matched against the already-lowercased message text.
+        private val ACCOUNT_CONTEXT_KEYWORDS = listOf(
+            "a/c", "ac no", "acct", "account", "upi", "bank", "card ending",
+            "card no", "wallet", "avl bal", "avl. bal"
+        )
+
+        // Fallback for messages that state the direction word immediately
+        // next to the amount but skip any currency token entirely — e.g.
+        // "A/C X8100 debited by 75.00 on date..." (no "Rs"/"INR"/"₹"
+        // anywhere in the message). The primary per-bank/generic regexes
+        // require a currency token before the digits and so silently miss
+        // this phrasing (amount comes back null, needsReview=true even
+        // though the number was right there). Anchored on "<direction
+        // word> by" specifically — deliberately narrow, so it doesn't
+        // accidentally grab a phone number or reference number elsewhere
+        // in the message. Applied only when the primary match found no
+        // amount.
+        private const val FALLBACK_AMOUNT_REGEX =
+            "(?i)\\b(?:debited|credited|withdrawn|spent|paid|received)\\s+by\\s+(?:rs\\.?|inr|₹)?\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
     }
 
     /** Runs regex.find with a hard timeout to prevent ReDoS from hanging the parser. */

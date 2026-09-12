@@ -106,8 +106,9 @@ dependencies {
     // Google Play Billing (Updated to 8.0.0 to satisfy Play Console)
     implementation "com.android.billingclient:billing-ktx:8.0.0"
 
-    // In-App Update & Ads
+    // In-App Update, In-App Review & Ads
     implementation "com.google.android.play:app-update-ktx:2.1.0"
+    implementation "com.google.android.play:review-ktx:2.0.2"
     implementation "com.google.android.gms:play-services-ads:23.6.0"
     implementation "com.google.android.ump:user-messaging-platform:3.1.0"
 
