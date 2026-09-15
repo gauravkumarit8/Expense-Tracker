@@ -13,6 +13,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # GitHub Actions does not allow the `secrets` context inside a step's
+    # `if:` condition (only github/needs/strategy/matrix/job/runner/env/
+    # vars/steps/inputs are permitted there — see docs.github.com/actions/
+    # reference/workflows-and-actions/contexts#context-availability).
+    # Computing it into a job-level env var here, then checking THAT in
+    # the step's `if:` below, works around it.
+    env:
+      HAS_RELEASE_SIGNING: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -52,7 +60,7 @@ jobs:
       #   RELEASE_KEY_ALIAS
       #   RELEASE_KEY_PASSWORD
       - name: Set up release signing (if configured)
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_RELEASE_SIGNING == 'true' }}
         run: |
           echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
           cat > keystore.properties <<EOF
