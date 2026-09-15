@@ -22,7 +22,7 @@ import com.google.android.gms.ads.LoadAdError
  * test ad, safe to leave in debug builds. Replace with a real ad unit ID
  * from AdMob console before release — see REQUIREMENTS.md ยง2.18.
  */
-private const val TEST_BANNER_AD_UNIT_ID = "ca-app-pub-3940256099942544/6300978111"
+private const val TEST_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/9782274174"
 
 /**
  * A standard banner ad. Renders nothing (zero height, no placeholder box)
