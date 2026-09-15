@@ -62,7 +62,7 @@
              See REQUIREMENTS.md ยง2.18. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-8712457399917631~5914829708" />
 
         <activity
             android:name=".ui.MainActivity"
