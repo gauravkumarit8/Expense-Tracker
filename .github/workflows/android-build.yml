@@ -39,8 +39,19 @@ jobs:
       # Installs the Android SDK (platform-tools, platforms, build-tools)
       # and accepts the licenses so Gradle doesn't fail the way it does
       # locally without ANDROID_HOME / local.properties set.
+      #
+      # `packages:` is set explicitly to override this action's own
+      # default ("tools platform-tools") — the legacy "tools" package
+      # was removed from Google's SDK repository years ago, so the
+      # default fails with "Failed to find package 'tools'". AGP
+      # auto-downloads whatever specific platform/build-tools versions
+      # the build actually needs once licenses are accepted (handled by
+      # accept-android-sdk-licenses below), so platform-tools alone is
+      # enough here.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
