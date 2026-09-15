@@ -64,6 +64,17 @@ import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
+import com.autoexpensetracker.review.ReviewHelper
+import com.autoexpensetracker.review.ReviewPromptStore
+import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.SemanticRed
+import com.autoexpensetracker.ui.theme.SemanticOrange
+import com.autoexpensetracker.ui.theme.SemanticGray
+import com.autoexpensetracker.ui.theme.SemanticIndigo
+import com.autoexpensetracker.ui.theme.SemanticBrown
+import com.autoexpensetracker.ui.theme.SemanticGold
+import com.autoexpensetracker.util.BalanceVisibilityStore
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -222,7 +233,7 @@ private fun OnboardingPermissionPage(notificationAccessGranted: Boolean) {
         if (notificationAccessGranted) Icons.Filled.CheckCircle else Icons.Filled.NotificationsActive,
         contentDescription = null,
         modifier = Modifier.size(72.dp),
-        tint = if (notificationAccessGranted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary
+        tint = if (notificationAccessGranted) BrandGreen else MaterialTheme.colorScheme.primary
     )
     Spacer(modifier = Modifier.height(24.dp))
     Text(
@@ -246,6 +257,7 @@ private fun OnboardingPermissionPage(notificationAccessGranted: Boolean) {
 }
 
 private enum class Screen(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    HOME("Home", Icons.Filled.Home),
     TRANSACTIONS("Transactions", Icons.Filled.List),
     CHARTS("Charts", Icons.Filled.BarChart),
     BUDGETS("Budgets", Icons.Filled.PieChart),
@@ -295,7 +307,7 @@ class MainActivity : FragmentActivity() {
         }
 
         setContent {
-            MaterialTheme {
+            ExpenseTrackerTheme {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
 
@@ -333,6 +345,21 @@ class MainActivity : FragmentActivity() {
                     appUpdateHelper.checkForUpdate(updateFlowLauncher, onUpdateAvailable = { showUpdateBanner = true })
                 }
 
+                // Ask for a review at most once per app open, only once
+                // ReviewPromptStore's criteria are met (real auto-captured
+                // usage, respecting a cooldown and a lifetime cap — see
+                // that file for the policy). Deliberately not tied to any
+                // particular screen or action — asking right after a
+                // "moment of delight" (e.g. right after a capture) would be
+                // better, but that moment happens in a background
+                // WorkManager job with no Activity to launch the flow from,
+                // so the next app open is the earliest safe opportunity.
+                LaunchedEffect(Unit) {
+                    if (ReviewPromptStore.isEligibleForPrompt(context)) {
+                        ReviewHelper.maybeRequestReview(this@MainActivity)
+                    }
+                }
+
                 /** Runs [action] immediately if Pro, otherwise shows the
                  *  upgrade dialog and runs [action] automatically once a
                  *  purchase succeeds. Demonstrated on CSV export as the
@@ -349,7 +376,7 @@ class MainActivity : FragmentActivity() {
                     ActivityResultContracts.RequestPermission()
                 ) { }
 
-                var screen by rememberSaveable { mutableStateOf(Screen.TRANSACTIONS) }
+                var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
                 val allTransactions by transactionDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
                 // Drives the red badge on the Search top-bar icon.
                 val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
@@ -533,7 +560,7 @@ class MainActivity : FragmentActivity() {
                     floatingActionButton = {
                         if (!showSettings && !showMonthlyHistory && !showSearch && !isLocked) {
                             when (screen) {
-                                Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
+                                Screen.HOME, Screen.TRANSACTIONS -> FloatingActionButton(onClick = { showManualEntry = true }) {
                                     Icon(Icons.Filled.Add, contentDescription = "Add cash transaction")
                                 }
                                 Screen.REMINDERS -> FloatingActionButton(onClick = { showAddReminder = true }) {
@@ -544,7 +571,7 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 ) { padding ->
-                    Surface(modifier = Modifier.fillMaxSize().padding(padding), color = Color(0xFFF7F7F9)) {
+                    Surface(modifier = Modifier.fillMaxSize().padding(padding), color = MaterialTheme.colorScheme.surfaceVariant) {
                         if (isLocked) {
                             LockScreen(
                                 onUnlockClick = {
@@ -630,6 +657,16 @@ class MainActivity : FragmentActivity() {
                             )
                         } else {
                             when (screen) {
+                                Screen.HOME -> DashboardScreen(
+                                    budgetDao = budgetDao,
+                                    reminderDao = reminderDao,
+                                    allTransactions = allTransactions,
+                                    onSeeAllTransactions = { screen = Screen.TRANSACTIONS },
+                                    onSeeCharts = { screen = Screen.CHARTS },
+                                    onSeeBudgets = { screen = Screen.BUDGETS },
+                                    onSeeReminders = { screen = Screen.REMINDERS },
+                                    onAddTransaction = { showManualEntry = true }
+                                )
                                 Screen.TRANSACTIONS -> TransactionsScreen(
                                     transactionDao = transactionDao,
                                     allTransactions = allTransactions,
@@ -856,7 +893,7 @@ private fun MonthHeaderRow(monthLabel: String, onSeeAllMonths: () -> Unit) {
 private fun NoTransactionsThisMonthState(monthLabel: String, onSeeAllMonths: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(40.dp), tint = Color(0xFFBDBDBD))
+            Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(40.dp), tint = SemanticGray)
             Spacer(modifier = Modifier.height(8.dp))
             Text("No transactions in $monthLabel", style = MaterialTheme.typography.titleSmall)
             Spacer(modifier = Modifier.height(4.dp))
@@ -1399,16 +1436,16 @@ private fun NeedsReviewBanner(count: Int, onClick: () -> Unit) {
         shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF3E0), onClick = onClick
     ) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = Color(0xFFE65100))
+            Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = SemanticOrange)
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     if (count == 1) "1 transaction needs review" else "$count transactions need review",
                     fontWeight = FontWeight.Medium
                 )
-                Text("Tap to fix amounts or directions the parser wasn't sure about", style = MaterialTheme.typography.bodySmall, color = Color(0xFF5D4037))
+                Text("Tap to fix amounts or directions the parser wasn't sure about", style = MaterialTheme.typography.bodySmall, color = SemanticBrown)
             }
-            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color(0xFFE65100))
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = SemanticOrange)
         }
     }
 }
@@ -1418,17 +1455,17 @@ private fun OnboardingBanner(onEnableClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), color = Color(0xFFFFF3E0)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Warning, contentDescription = null, tint = Color(0xFFE65100))
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = SemanticOrange)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Notification access needed", fontWeight = FontWeight.SemiBold)
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 "Expense Tracker reads bank/UPI alerts from your notifications to auto-log transactions. Nothing leaves your device.",
-                style = MaterialTheme.typography.bodySmall, color = Color(0xFF5D4037)
+                style = MaterialTheme.typography.bodySmall, color = SemanticBrown
             )
             Spacer(modifier = Modifier.height(12.dp))
-            Button(onClick = onEnableClick, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100))) { Text("Enable in Settings") }
+            Button(onClick = onEnableClick, colors = ButtonDefaults.buttonColors(containerColor = SemanticOrange)) { Text("Enable in Settings") }
         }
     }
 }
@@ -1437,7 +1474,7 @@ private fun OnboardingBanner(onEnableClick: () -> Unit) {
 private fun EmptyState(showHint: Boolean) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFBDBDBD))
+            Icon(Icons.Filled.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
             Spacer(modifier = Modifier.height(12.dp))
             Text("No transactions yet", style = MaterialTheme.typography.titleMedium)
             if (showHint) {
@@ -1456,7 +1493,7 @@ private fun EmptyState(showHint: Boolean) {
 private fun NoResultsState() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.SearchOff, contentDescription = null, modifier = Modifier.size(40.dp), tint = Color(0xFFBDBDBD))
+            Icon(Icons.Filled.SearchOff, contentDescription = null, modifier = Modifier.size(40.dp), tint = SemanticGray)
             Spacer(modifier = Modifier.height(8.dp))
             Text("No matching transactions", style = MaterialTheme.typography.titleSmall)
             Text("Try a different search or filter.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
@@ -1474,8 +1511,8 @@ private fun SummaryHeader(
     val sent = transactions.filter { it.direction == Direction.SENT }.sumOf { it.amount }
     val received = transactions.filter { it.direction == Direction.RECEIVED }.sumOf { it.amount }
     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        StatCard("Sent", sent, Color(0xFFD32F2F), directionFilter == DirectionFilter.SENT, Modifier.weight(1f), onSentClick)
-        StatCard("Received", received, Color(0xFF2E7D32), directionFilter == DirectionFilter.RECEIVED, Modifier.weight(1f), onReceivedClick)
+        StatCard("Sent", sent, SemanticRed, directionFilter == DirectionFilter.SENT, Modifier.weight(1f), onSentClick)
+        StatCard("Received", received, BrandGreen, directionFilter == DirectionFilter.RECEIVED, Modifier.weight(1f), onReceivedClick)
     }
 }
 
@@ -1525,7 +1562,7 @@ private fun NetSummaryCard(
     val sent = remember(transactions) { transactions.filter { it.direction == Direction.SENT }.sumOf { it.amount } }
     val received = remember(transactions) { transactions.filter { it.direction == Direction.RECEIVED }.sumOf { it.amount } }
     val net = received - sent
-    val netColor = if (net >= 0) Color(0xFF2E7D32) else Color(0xFFD32F2F) // green-800 / red-800
+    val netColor = if (net >= 0) BrandGreen else SemanticRed // green-800 / red-800
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -1549,12 +1586,12 @@ private fun NetSummaryCard(
             }
         }
         StatCard(
-            "Sent", sent, Color(0xFFD32F2F),
+            "Sent", sent, SemanticRed,
             isActive = directionFilter == DirectionFilter.SENT,
             modifier = Modifier.weight(1f), onClick = onSentClick
         )
         StatCard(
-            "Received", received, Color(0xFF2E7D32),
+            "Received", received, BrandGreen,
             isActive = directionFilter == DirectionFilter.RECEIVED,
             modifier = Modifier.weight(1f), onClick = onReceivedClick
         )
@@ -1584,10 +1621,10 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
 }
 
 @Composable
-private fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onClick: () -> Unit) {
+internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onClick: () -> Unit) {
     val isSent = tx.direction == Direction.SENT
     val iconBg = when { tx.needsReview -> Color(0xFFFFF3E0); isSent -> Color(0xFFFFEBEE); else -> Color(0xFFE8F5E9) }
-    val iconTint = when { tx.needsReview -> Color(0xFFE65100); isSent -> Color(0xFFD32F2F); else -> Color(0xFF2E7D32) }
+    val iconTint = when { tx.needsReview -> SemanticOrange; isSent -> SemanticRed; else -> BrandGreen }
     val icon = when { tx.needsReview -> Icons.Filled.PriorityHigh; isSent -> Icons.Filled.ArrowUpward; else -> Icons.Filled.ArrowDownward }
     val category = Category.fromNameOrNull(tx.category)
 
@@ -1604,11 +1641,11 @@ private fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onClic
                 }
                 Text(
                     "${tx.bankOrSource} • ${timeFormat.format(Date(tx.timestampMillis))}" + if (tx.needsReview) " • Needs review" else "",
-                    style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) Color(0xFFE65100) else Color.Gray
+                    style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) SemanticOrange else Color.Gray
                 )
                 if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 1)
             }
-            Text("${if (isSent) "-" else "+"}₹${"%.2f".format(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) Color(0xFFD32F2F) else Color(0xFF2E7D32))
+            Text("${if (isSent) "-" else "+"}₹${"%.2f".format(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
         }
     }
 }
@@ -1677,7 +1714,7 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
             onDismissRequest = { confirmingDelete = false },
             title = { Text("Delete this transaction?") },
             text = { Text("This cannot be undone.") },
-            confirmButton = { TextButton(onClick = onDelete) { Text("Delete", color = Color(0xFFD32F2F)) } },
+            confirmButton = { TextButton(onClick = onDelete) { Text("Delete", color = SemanticRed) } },
             dismissButton = { TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") } }
         )
         return
@@ -1691,11 +1728,11 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                 if (transaction.needsReview) {
                     Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0), modifier = Modifier.fillMaxWidth()) {
                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
-                            Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = SemanticOrange, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 "The amount or direction couldn't be confidently parsed. Fix it below or save as-is to mark it reviewed.",
-                                style = MaterialTheme.typography.bodySmall, color = Color(0xFF5D4037)
+                                style = MaterialTheme.typography.bodySmall, color = SemanticBrown
                             )
                         }
                     }
@@ -1748,9 +1785,9 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                 OutlinedTextField(value = tags, onValueChange = { tags = it }, label = { Text("Tags (comma separated)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(12.dp))
                 TextButton(onClick = { confirmingDelete = true }) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFD32F2F), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = SemanticRed, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Delete transaction", color = Color(0xFFD32F2F))
+                    Text("Delete transaction", color = SemanticRed)
                 }
             }
         },
@@ -1856,6 +1893,16 @@ private fun ManualEntryDialog(onDismiss: () -> Unit, onSave: (Transaction) -> Un
 
 @Composable
 private fun ChartsScreen(allTransactions: List<Transaction>) {
+    // BalanceVisibilityStore already existed but was never read from or
+    // written to anywhere in the UI — the "Account balances" section always
+    // rendered real figures with no way to mask them. Wired up here: state
+    // seeded from the store (defaults hidden, see BalanceVisibilityStore
+    // doc comment), toggled by the eye icon next to the section heading,
+    // and persisted back on every toggle so the choice survives navigating
+    // away and relaunching the app.
+    val context = LocalContext.current
+    var balancesVisible by remember { mutableStateOf(BalanceVisibilityStore.isVisible(context)) }
+
     val now = Calendar.getInstance()
     val startOfMonth = (now.clone() as Calendar).apply {
         set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -1884,7 +1931,7 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     if (byCategory.isEmpty() && latestBalances.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFBDBDBD))
+                Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("No spending this month yet", style = MaterialTheme.typography.titleMedium)
             }
@@ -1897,12 +1944,30 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
         if (latestBalances.isNotEmpty()) {
             item {
-                Text("Account balances", style = MaterialTheme.typography.titleMedium)
-                Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Account balances", style = MaterialTheme.typography.titleMedium)
+                        Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                    IconButton(onClick = {
+                        balancesVisible = !balancesVisible
+                        BalanceVisibilityStore.setVisible(context, balancesVisible)
+                    }) {
+                        Icon(
+                            if (balancesVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                            contentDescription = if (balancesVisible) "Hide balances" else "Show balances",
+                            tint = Color.Gray
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(10.dp))
             }
             items(latestBalances) { (source, tx) ->
-                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis)
+                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis, visible = balancesVisible)
                 Spacer(modifier = Modifier.height(8.dp))
             }
             item { Spacer(modifier = Modifier.height(20.dp)) }
@@ -1923,7 +1988,7 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
 }
 
 @Composable
-private fun BalanceRow(source: String, balance: Double, asOfMillis: Long) {
+private fun BalanceRow(source: String, balance: Double, asOfMillis: Long, visible: Boolean) {
     val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1931,7 +1996,11 @@ private fun BalanceRow(source: String, balance: Double, asOfMillis: Long) {
                 Text(source, fontWeight = FontWeight.Medium)
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
-            Text("₹${"%.2f".format(balance)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (visible) "₹${"%.2f".format(balance)}" else "₹ • • • • • •",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -1948,7 +2017,7 @@ private fun CategoryBarRow(category: Category, amount: Double, total: Double) {
         Canvas(modifier = Modifier.fillMaxWidth().height(14.dp)) {
             drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f))
             drawRoundRect(
-                color = Color(0xFF5C6BC0),
+                color = SemanticIndigo,
                 size = size.copy(width = size.width * fraction),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f)
             )
@@ -2013,9 +2082,9 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
                 Spacer(modifier = Modifier.height(6.dp))
                 val fraction = (spent / limit).toFloat().coerceIn(0f, 1f)
                 val barColor = when {
-                    spent > limit -> Color(0xFFD32F2F)
+                    spent > limit -> SemanticRed
                     spent / limit > 0.7 -> Color(0xFFF57C00)
-                    else -> Color(0xFF2E7D32)
+                    else -> BrandGreen
                 }
                 Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
                     drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
@@ -2023,7 +2092,7 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
                 }
                 if (spent > limit) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Over budget by ₹${"%.2f".format(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = Color(0xFFD32F2F))
+                    Text("Over budget by ₹${"%.2f".format(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = SemanticRed)
                 }
             }
         }
@@ -2073,7 +2142,7 @@ private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tran
     if (reminders.isEmpty() && suggestions.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.NotificationsActive, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFBDBDBD))
+                Icon(Icons.Filled.NotificationsActive, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("No reminders yet", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(4.dp))
@@ -2155,7 +2224,7 @@ private fun ReminderRow(reminder: Reminder, onDelete: () -> Unit) {
                 )
                 if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
-            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "Delete reminder", tint = Color(0xFFBDBDBD)) }
+            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "Delete reminder", tint = SemanticGray) }
         }
     }
 }
@@ -2221,7 +2290,7 @@ private fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, onI
             text = { Text("This replaces ALL current transactions, reminders, and budgets with the contents of the backup file. This cannot be undone.") },
             confirmButton = {
                 TextButton(onClick = { confirmingImport = false; onImport() }) {
-                    Text("Replace everything", color = Color(0xFFD32F2F))
+                    Text("Replace everything", color = SemanticRed)
                 }
             },
             dismissButton = { TextButton(onClick = { confirmingImport = false }) { Text("Cancel") } }
@@ -2241,11 +2310,11 @@ private fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, onI
                 Spacer(modifier = Modifier.height(12.dp))
                 Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0)) {
                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
-                        Icon(Icons.Filled.Warning, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.Warning, contentDescription = null, tint = SemanticOrange, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             "The backup file is NOT encrypted. Save it somewhere private, not a publicly shared folder.",
-                            style = MaterialTheme.typography.bodySmall, color = Color(0xFF5D4037)
+                            style = MaterialTheme.typography.bodySmall, color = SemanticBrown
                         )
                     }
                 }
@@ -2309,7 +2378,7 @@ private fun SettingsScreen(
                 title = if (isPro) "Expense Tracker Pro" else "Upgrade to Pro",
                 subtitle = if (isPro) "Thanks for supporting the app!" else "CSV export and more, ad-free, no lending upsells",
                 onClick = onUpgradeClick,
-                tint = if (isPro) Color(0xFFF9A825) else Color(0xFF5C6BC0)
+                tint = if (isPro) SemanticGold else SemanticIndigo
             )
             Spacer(modifier = Modifier.height(20.dp))
         }
@@ -2368,7 +2437,7 @@ private fun SettingsScreen(
                 title = "Notification access",
                 subtitle = if (notificationAccessGranted) "Granted — bank/UPI alerts are being captured" else "Not granted — tap to enable in Settings",
                 onClick = onEnableNotificationAccess,
-                tint = if (notificationAccessGranted) Color(0xFF2E7D32) else Color(0xFFE65100)
+                tint = if (notificationAccessGranted) BrandGreen else SemanticOrange
             )
             // Only shown when the UMP SDK determines this user's region
             // requires an always-available way to revisit their ad-consent
@@ -2387,7 +2456,7 @@ private fun SettingsScreen(
         }
 
         item {
-            Text("Danger zone", style = MaterialTheme.typography.labelLarge, color = Color(0xFFD32F2F))
+            Text("Danger zone", style = MaterialTheme.typography.labelLarge, color = SemanticRed)
             Spacer(modifier = Modifier.height(8.dp))
         }
         item {
@@ -2396,7 +2465,7 @@ private fun SettingsScreen(
                 title = "Delete all data",
                 subtitle = "Permanently erases all transactions, reminders, and budgets",
                 onClick = { showDeleteConfirm = true },
-                tint = Color(0xFFD32F2F)
+                tint = SemanticRed
             )
             Spacer(modifier = Modifier.height(20.dp))
         }
@@ -2424,7 +2493,7 @@ private fun SettingsScreen(
             text = { Text("This permanently erases every transaction, reminder, and budget on this device. This cannot be undone — consider exporting a backup first.") },
             confirmButton = {
                 TextButton(onClick = { showDeleteConfirm = false; onDeleteAllData() }) {
-                    Text("Delete everything", color = Color(0xFFD32F2F))
+                    Text("Delete everything", color = SemanticRed)
                 }
             },
             dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } }
@@ -2438,7 +2507,7 @@ private fun SettingsRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    tint: Color = Color(0xFF5C6BC0)
+    tint: Color = SemanticIndigo
 ) {
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2448,7 +2517,7 @@ private fun SettingsRow(
                 Text(title, fontWeight = FontWeight.Medium)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
-            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color(0xFFBDBDBD))
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = SemanticGray)
         }
     }
 }
@@ -2464,10 +2533,10 @@ private fun SettingsToggleRow(
 ) {
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = if (enabled) Color(0xFF5C6BC0) else Color(0xFFBDBDBD), modifier = Modifier.size(22.dp))
+            Icon(icon, contentDescription = null, tint = if (enabled) SemanticIndigo else SemanticGray, modifier = Modifier.size(22.dp))
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Medium, color = if (enabled) Color.Unspecified else Color(0xFFBDBDBD))
+                Text(title, fontWeight = FontWeight.Medium, color = if (enabled) Color.Unspecified else SemanticGray)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
@@ -2481,7 +2550,7 @@ private fun SettingsToggleRow(
 private fun LockScreen(onUnlockClick: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(56.dp), tint = Color(0xFF5C6BC0))
+            Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(56.dp), tint = SemanticIndigo)
             Spacer(modifier = Modifier.height(16.dp))
             Text("Expense Tracker is locked", style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(4.dp))
@@ -2537,12 +2606,12 @@ private fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             shape = RoundedCornerShape(12.dp),
                             color = if (isYearly) Color(0xFFEDF7ED) else Color(0xFFF7F7F9),
-                            border = if (isYearly) BorderStroke(1.dp, Color(0xFF2E7D32)) else null,
+                            border = if (isYearly) BorderStroke(1.dp, BrandGreen) else null,
                             onClick = { onSelectProduct(product) }
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 if (isYearly) {
-                                    Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFF2E7D32)) {
+                                    Surface(shape = RoundedCornerShape(6.dp), color = BrandGreen) {
                                         Text(
                                             "BEST VALUE", color = Color.White, fontWeight = FontWeight.Bold,
                                             style = MaterialTheme.typography.labelSmall,
@@ -2600,7 +2669,7 @@ private fun ManageSubscriptionDialog(
         text = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = Color(0xFFF9A825))
+                    Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = SemanticGold)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("You're on the $currentLabel plan", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 }

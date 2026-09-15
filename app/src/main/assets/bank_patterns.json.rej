@@ -1,0 +1,138 @@
+diff a/app/src/main/assets/bank_patterns.json b/app/src/main/assets/bank_patterns.json	(rejected hunks)
+@@ -1,5 +1,5 @@
+ {
+-  "version": 7,
++  "version": 8,
+   "patterns": [
+     {
+       "senderMatch": "HDFCBK|HDFC",
+@@ -31,6 +31,111 @@
+       "debitedRegex": "(?is)(?:sent|paid|debited|spent)?\\s*(?:rs\\.?\\s?|inr\\s?)([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent)?(?:.*?\\b(?:to|at)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
+       "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?\\s?|inr\\s?)([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
+     },
++    {
++      "senderMatch": "YESBNK|YES BANK|YESB",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "IDFCFB|IDFC FIRST|IDFCB",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "PNBSMS|PUNJAB NATIONAL|PNBBNK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "BOBTXN|BANK OF BARODA|BOBBNK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "CANBNK|CANARA BANK|CANARA",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "INDUSB|INDUSIND",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "RBLBNK|RBL BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "FEDBNK|FEDERAL BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "IDBIBK|IDBI BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "BOIIND|BANK OF INDIA",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "CBIBNK|CENTRAL BANK OF INDIA",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "INDBNK|INDIAN BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "UCOBNK|UCO BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "SCBANK|STANCHART|STANDARD CHARTERED",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "CITIBK|CITI BANK|CITIBANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "HSBCIN|HSBC",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "AMEXIN|AMERICAN EXPRESS",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "DBSBNK|DBS BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "AUBANK|AU SMALL FINANCE",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "BANDHN|BANDHAN BANK",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
++    {
++      "senderMatch": "CREDCB|CRED",
++      "debitedRegex": "(?is)(?:sent|paid|debited|spent|withdrawn)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent|withdrawn)?(?:.*?\\b(?:to|at|towards)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
++      "creditedRegex": "(?is)(?:received|credited)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:received|credited)?(?:.*?\\bfrom\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?"
++    },
+     {
+       "senderMatch": "GENERIC_UPI",
+       "debitedRegex": "(?is)(?:sent|paid|debited|spent)?\\s*(?:rs\\.?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)\\s?(?:sent|paid|debited|spent)?(?:.*?\\b(?:to|at)\\s+(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z0-9@._\\- ]{2,60}?)(?=\\s*[.,(]|\\s+(?:on|via|is)\\b|$))?",
+@@ -61,6 +166,14 @@
+     "upi",
+     "txn",
+     "sent",
+-    "payment"
++    "payment",
++    "purchase",
++    "swiped",
++    "deposited",
++    "billed",
++    "used at",
++    "transaction",
++    "avl bal",
++    "avl. bal"
+   ]
+-}
+\ No newline at end of file
++}
