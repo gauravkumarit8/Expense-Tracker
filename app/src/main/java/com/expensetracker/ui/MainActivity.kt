@@ -75,6 +75,7 @@ import com.autoexpensetracker.ui.theme.SemanticIndigo
 import com.autoexpensetracker.ui.theme.SemanticBrown
 import com.autoexpensetracker.ui.theme.SemanticGold
 import com.autoexpensetracker.util.BalanceVisibilityStore
+import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -1903,6 +1904,21 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     val context = LocalContext.current
     var balancesVisible by remember { mutableStateOf(BalanceVisibilityStore.isVisible(context)) }
 
+    // Manual overrides/additions/deletions for the balances section — see
+    // ManualBalanceStore doc comment. Re-read after every mutation rather
+    // than kept as a Flow, matching this screen's existing pattern for
+    // BalanceVisibilityStore above (small, infrequently-changed local
+    // preference state, not data that changes from outside this screen).
+    var manualEntries by remember { mutableStateOf(ManualBalanceStore.getAll(context)) }
+    var hiddenSources by remember { mutableStateOf(ManualBalanceStore.getHidden(context)) }
+    var editingSource by remember { mutableStateOf<String?>(null) }
+    var showAddBalanceDialog by remember { mutableStateOf(false) }
+
+    fun refreshManualBalances() {
+        manualEntries = ManualBalanceStore.getAll(context)
+        hiddenSources = ManualBalanceStore.getHidden(context)
+    }
+
     val now = Calendar.getInstance()
     val startOfMonth = (now.clone() as Calendar).apply {
         set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -1910,13 +1926,29 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
 
     // Latest known balance per bank/account source — most recent transaction
     // (by timestamp) that happened to include a parsed balanceAfter value.
-    val latestBalances = remember(allTransactions) {
+    val autoBalances = remember(allTransactions) {
         allTransactions
             .filter { it.balanceAfter != null }
             .groupBy { it.bankOrSource }
             .mapValues { (_, txs) -> txs.maxByOrNull { it.timestampMillis }!! }
-            .toList()
-            .sortedByDescending { it.second.timestampMillis }
+    }
+
+    // Merge auto-detected balances with manual overrides/additions, drop
+    // anything the user has deleted, sort newest-first. A manual entry for
+    // a source that also has auto-detected transactions wins outright
+    // (see ManualBalanceStore doc comment on why that's unconditional).
+    data class BalanceEntry(val source: String, val amount: Double, val asOfMillis: Long, val isManual: Boolean)
+
+    val latestBalances = remember(autoBalances, manualEntries, hiddenSources) {
+        val manualBySource = manualEntries.associateBy { it.source }
+        val autoOnly = autoBalances.keys.minus(manualBySource.keys).map { source ->
+            val tx = autoBalances.getValue(source)
+            BalanceEntry(source, tx.balanceAfter!!, tx.timestampMillis, isManual = false)
+        }
+        val manual = manualEntries.map { BalanceEntry(it.source, it.amount, it.asOfMillis, isManual = true) }
+        (autoOnly + manual)
+            .filterNot { hiddenSources.contains(it.source) }
+            .sortedByDescending { it.asOfMillis }
     }
 
     val thisMonthSpend = remember(allTransactions) {
@@ -1928,12 +1960,43 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
             .toList().sortedByDescending { it.second }
     }
 
+    if (showAddBalanceDialog) {
+        AddOrEditBalanceDialog(
+            initialSource = null,
+            onDismiss = { showAddBalanceDialog = false },
+            onSave = { source, amount ->
+                ManualBalanceStore.upsert(context, source, amount)
+                refreshManualBalances()
+                showAddBalanceDialog = false
+            }
+        )
+    }
+    editingSource?.let { source ->
+        val current = latestBalances.firstOrNull { it.source == source }
+        AddOrEditBalanceDialog(
+            initialSource = source,
+            initialAmount = current?.amount,
+            onDismiss = { editingSource = null },
+            onSave = { _, amount ->
+                ManualBalanceStore.upsert(context, source, amount)
+                refreshManualBalances()
+                editingSource = null
+            }
+        )
+    }
+
     if (byCategory.isEmpty() && latestBalances.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("No spending this month yet", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedButton(onClick = { showAddBalanceDialog = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Add an account balance")
+                }
             }
         }
         return
@@ -1942,16 +2005,19 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     val total = byCategory.sumOf { it.second }
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
-        if (latestBalances.isNotEmpty()) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Account balances", style = MaterialTheme.typography.titleMedium)
-                        Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Account balances", style = MaterialTheme.typography.titleMedium)
+                    Text("Latest known balance per account", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAddBalanceDialog = true }) {
+                        Icon(Icons.Filled.AddCircle, contentDescription = "Add account balance", tint = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = {
                         balancesVisible = !balancesVisible
@@ -1964,10 +2030,32 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(10.dp))
             }
-            items(latestBalances) { (source, tx) ->
-                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis, visible = balancesVisible)
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+        if (latestBalances.isEmpty()) {
+            item {
+                Text(
+                    "No account balances yet — captured messages with a balance will show up here, or add one manually.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+        } else {
+            items(latestBalances, key = { it.source }) { entry ->
+                BalanceRow(
+                    source = entry.source,
+                    balance = entry.amount,
+                    asOfMillis = entry.asOfMillis,
+                    visible = balancesVisible,
+                    isManual = entry.isManual,
+                    onEdit = { editingSource = entry.source },
+                    onDelete = {
+                        ManualBalanceStore.delete(context, entry.source)
+                        refreshManualBalances()
+                    }
+                )
                 Spacer(modifier = Modifier.height(8.dp))
             }
             item { Spacer(modifier = Modifier.height(20.dp)) }
@@ -1988,12 +2076,40 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
 }
 
 @Composable
-private fun BalanceRow(source: String, balance: Double, asOfMillis: Long, visible: Boolean) {
+private fun BalanceRow(
+    source: String,
+    balance: Double,
+    asOfMillis: Long,
+    visible: Boolean,
+    isManual: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Remove $source?") },
+            text = { Text("This hides it from Account balances. If new messages from this bank arrive later, add it back manually to show it again.") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } }
+        )
+    }
+
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text(source, fontWeight = FontWeight.Medium)
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(source, fontWeight = FontWeight.Medium)
+                    if (isManual) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("(manual)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    }
+                }
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Text(
@@ -2001,8 +2117,64 @@ private fun BalanceRow(source: String, balance: Double, asOfMillis: Long, visibl
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
+            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = Color.Gray, modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
+            }
         }
     }
+}
+
+@Composable
+private fun AddOrEditBalanceDialog(
+    initialSource: String?,
+    initialAmount: Double? = null,
+    onDismiss: () -> Unit,
+    onSave: (source: String, amount: Double) -> Unit
+) {
+    var source by remember { mutableStateOf(initialSource ?: "") }
+    var amount by remember { mutableStateOf(initialAmount?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() } ?: "") }
+    val isEditing = initialSource != null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isEditing) "Edit balance" else "Add account balance") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = source,
+                    onValueChange = { source = it },
+                    label = { Text("Account / bank name") },
+                    singleLine = true,
+                    enabled = !isEditing,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Current balance") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val amt = amount.toDoubleOrNull() ?: return@TextButton
+                    val src = source.trim()
+                    if (src.isEmpty()) return@TextButton
+                    onSave(src, amt)
+                },
+                enabled = amount.toDoubleOrNull() != null && source.isNotBlank()
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
