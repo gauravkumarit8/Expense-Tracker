@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -288,6 +289,16 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Target API 36 enforces edge-to-edge display unconditionally
+        // regardless of this call — but calling it explicitly is what
+        // gives the system bars automatic light/dark icon contrast
+        // matching the current theme, instead of leaving that to
+        // whatever default scrim the OS falls back to when an app hasn't
+        // opted in. The deprecated android:statusBarColor/
+        // navigationBarColor attributes in themes.xml are superseded by
+        // this on API 35+ (ignored there either way) — left in place only
+        // for the pre-Compose window on API <35, where they still apply.
+        enableEdgeToEdge()
         val db = AppDatabase.getInstance(applicationContext)
         val transactionDao = db.transactionDao()
         val reminderDao = db.reminderDao()
@@ -2322,7 +2333,16 @@ private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tran
             }
         }
     } else {
+        val confirmedTotal = remember(reminders) { reminders.mapNotNull { it.amount }.sum() }
+        val detectedTotal = remember(suggestions) { suggestions.sumOf { it.averageAmount } }
+
         LazyColumn(contentPadding = PaddingValues(16.dp)) {
+            if (confirmedTotal > 0 || detectedTotal > 0) {
+                item {
+                    MonthlyRecurringSpendCard(confirmedTotal = confirmedTotal, detectedTotal = detectedTotal)
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
             if (suggestions.isNotEmpty()) {
                 item {
                     Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
@@ -2358,6 +2378,46 @@ private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tran
                 }
             }
             items(reminders) { reminder -> ReminderRow(reminder, onDelete = { scope.launch { reminderDao.delete(reminder.id) } }) }
+        }
+    }
+}
+
+@Composable
+private fun MonthlyRecurringSpendCard(confirmedTotal: Double, detectedTotal: Double) {
+    val total = confirmedTotal + detectedTotal
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primaryContainer
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Monthly recurring spend",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "₹${"%.2f".format(total)}",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            if (detectedTotal > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "₹${"%.2f".format(confirmedTotal)} tracked + ₹${"%.2f".format(detectedTotal)} detected but not yet added below",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Across all reminders with a known amount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+            }
         }
     }
 }
