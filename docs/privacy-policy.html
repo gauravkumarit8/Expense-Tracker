@@ -16,13 +16,15 @@
 <body>
 
 <h1>Privacy Policy — Auto Expense Tracker</h1>
-<p class="updated">Last updated: September 5, 2026</p>
+<p class="updated">Last updated: September 16, 2026</p>
 
 <p>Auto Expense Tracker ("the app") is an Android app that helps you track
 your spending automatically. This page explains what information the app
 accesses, what it does with it, and what it never does. We wrote this to
 be accurate and specific to how the app actually works, not generic
-boilerplate.</p>
+boilerplate. This policy is kept in sync with the Data Safety declarations
+we file in Google Play Console — the two describe the same facts, so
+nothing here should contradict what's declared there.</p>
 
 <h2>The short version</h2>
 <p>Your financial transaction data is processed and stored <strong>only on
@@ -97,14 +99,18 @@ your financial transaction data:</p>
 
 <ul>
   <li><strong>Google AdMob</strong> (for the free tier's banner ads):
-  processes an advertising identifier for ad delivery, subject to your
-  ad-consent choice (EU/UK users are shown a consent form on first launch,
-  per Google's requirements, and can change this choice any time from
-  Settings → Privacy & Ad Consent).</li>
+  collects your device's <strong>Advertising ID</strong> for ad delivery
+  and frequency capping, subject to your ad-consent choice (EEA/UK users
+  are shown a consent form on first launch, per Google's UMP requirements,
+  and can change this choice any time from Settings → Privacy & Ad
+  Consent). This Advertising ID is shared with Google for ad-serving
+  purposes; the app itself does not otherwise share or sell it.</li>
   <li><strong>Google Play Billing</strong> (for the optional Pro
-  subscription): processes your purchase/subscription status. Payment
-  details are handled entirely by Google Play — this app never sees or
-  stores your payment information.</li>
+  subscription): processes your <strong>purchase history</strong> for
+  this app's subscription only. Payment details (card numbers, UPI IDs,
+  etc.) are handled entirely by Google Play and never reach this app or
+  its developer — we only ever see a subscription status (active/expired),
+  not payment instrument details.</li>
   <li><strong>Google Play's in-app update and in-app review features</strong>:
   check for app updates and, occasionally, prompt for a Play Store rating.
   Standard Google Play services, not custom infrastructure of ours.</li>
@@ -113,10 +119,27 @@ your financial transaction data:</p>
 <p>See Google's own Privacy Policy for how these Google services handle
 data: <a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></p>
 
+<h2>Security practices</h2>
+<ul>
+  <li><strong>Encryption at rest:</strong> your transaction data is encrypted
+  on-device (SQLCipher/AES-256) with a key held in Android Keystore hardware
+  where available.</li>
+  <li><strong>Encryption in transit:</strong> not applicable to your
+  financial data — it is never transmitted anywhere. The only network
+  traffic this app generates is the Google services above, which use
+  Google's own encrypted connections.</li>
+  <li><strong>Data deletion:</strong> there is no server-side account to
+  delete, because there is no server. You can permanently erase all
+  locally stored data at any time from Settings → Delete All Data, which
+  takes effect immediately and cannot be undone. Uninstalling the app has
+  the same effect, since nothing is stored anywhere else.</li>
+</ul>
+
 <h2>Permissions the app uses, and why</h2>
 <ul>
   <li><strong>Notification access</strong> — to detect bank/UPI transaction alerts, as described above.</li>
   <li><strong>Notifications (POST_NOTIFICATIONS)</strong> — to show you bill reminders and unusual-spending alerts you've configured.</li>
+  <li><strong>Ignore battery optimizations (request only, never silent)</strong> — the app can ask to be exempted from aggressive battery management, so the notification listener isn't killed in the background and stops capturing transactions. You choose whether to grant this from a dedicated settings screen; nothing happens without you tapping through it.</li>
   <li><strong>Biometric/fingerprint</strong> — only if you turn on the optional app lock feature, to unlock the app.</li>
   <li><strong>Internet &amp; network state</strong> — used only for the Google services described above; never for transmitting your transaction data.</li>
 </ul>

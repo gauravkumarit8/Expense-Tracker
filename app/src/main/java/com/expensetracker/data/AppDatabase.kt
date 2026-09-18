@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import com.autoexpensetracker.util.KeystoreHelper
 
-@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 4, exportSchema = false)
+@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
@@ -87,6 +87,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 -> v5: adds an index on `timestampMillis`. See REQUIREMENTS.md
+         * §7 open item and the doc comment on Transaction.timestampMillis —
+         * this doesn't change *how* month/year filtering queries the table
+         * yet (still client-side over the full loaded list), it just makes
+         * the column ready for that change without a second migration
+         * later, and already speeds up the existing
+         * `getNearTimestamp(start, end)` range query used for cross-source
+         * duplicate detection on every single insert.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transactions_timestampMillis ON transactions(timestampMillis)")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build(context).also { INSTANCE = it }
@@ -102,7 +118,7 @@ abstract class AppDatabase : RoomDatabase() {
 
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
         }
     }

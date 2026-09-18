@@ -1,6 +1,7 @@
 package com.autoexpensetracker.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
@@ -16,9 +17,18 @@ enum class Direction { SENT, RECEIVED, UNKNOWN }
  * `rawTextHash` is kept only for de-duplication (avoid double-counting the
  * same message if both the notification listener and SMS receiver fire for
  * it) and is a one-way hash, not reversible to the original text.
+ *
+ * `timestampMillis` is indexed (added in MIGRATION_4_5, see AppDatabase) —
+ * flagged as an open item in REQUIREMENTS.md §7 ("Add CREATE INDEX
+ * idx_transactions_timestampMillis if month/year filtering moves to a
+ * DB-level query"). Month/year filtering (Charts, Monthly History) is
+ * still done client-side over the full already-loaded list for now, not a
+ * WHERE clause — that part of the open item is unchanged by this — but the
+ * index is cheap to add now and ready for whenever that query-level change
+ * happens, rather than needing a second migration then.
  */
 @Serializable
-@Entity(tableName = "transactions")
+@Entity(tableName = "transactions", indices = [Index(value = ["timestampMillis"])])
 data class Transaction(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val amount: Double,

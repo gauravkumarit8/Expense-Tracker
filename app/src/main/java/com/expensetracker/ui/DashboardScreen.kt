@@ -1,5 +1,11 @@
 package com.autoexpensetracker.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
@@ -32,7 +38,11 @@ import com.autoexpensetracker.data.Direction
 import com.autoexpensetracker.data.Reminder
 import com.autoexpensetracker.data.ReminderDao
 import com.autoexpensetracker.data.Transaction
+import com.autoexpensetracker.ui.theme.SemanticGray
+import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.util.MonthRange
+import com.autoexpensetracker.util.formatInr
+import com.autoexpensetracker.util.formatInrWhole
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -122,78 +132,85 @@ internal fun DashboardScreen(
         }
     }
 
-    LazyColumn(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+    val visibleState = remember { MutableTransitionState(false).apply { targetState = true } }
+
+    AnimatedVisibility(
+        visibleState = visibleState,
+        enter = fadeIn(animationSpec = tween(350)) + slideInVertically(animationSpec = tween(350)) { it / 8 }
     ) {
-        item {
-            Column {
-                Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
-                Text(monthRange.label(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        LazyColumn(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            item {
+                Column {
+                    Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+                    Text(monthRange.label(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                }
             }
-        }
 
-        item {
-            MonthSummaryHeroCard(spent = spent, received = received, net = net, onClick = onSeeCharts)
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                QuickActionChip("Charts", Icons.Filled.BarChart, Modifier.weight(1f), onSeeCharts)
-                QuickActionChip("Budgets", Icons.Filled.PieChart, Modifier.weight(1f), onSeeBudgets)
-                QuickActionChip("Reminders", Icons.Filled.NotificationsActive, Modifier.weight(1f), onSeeReminders)
+            item {
+                MonthSummaryHeroCard(spent = spent, received = received, net = net, onClick = onSeeCharts)
             }
-        }
 
-        item {
-            DashboardSection(title = "Budgets to watch", onSeeAll = onSeeBudgets) {
-                if (topBudgets.isEmpty()) {
-                    EmptySectionCard(
-                        message = "No budgets set yet. Add one to keep spending in check.",
-                        actionLabel = "Set a budget",
-                        onAction = onSeeBudgets
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        topBudgets.forEach { (cat, spentAmt, limit) ->
-                            BudgetGlanceRow(cat, spentAmt, limit)
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    QuickActionChip("Charts", Icons.Filled.BarChart, Modifier.weight(1f), onSeeCharts)
+                    QuickActionChip("Budgets", Icons.Filled.PieChart, Modifier.weight(1f), onSeeBudgets)
+                    QuickActionChip("Reminders", Icons.Filled.NotificationsActive, Modifier.weight(1f), onSeeReminders)
+                }
+            }
+
+            item {
+                DashboardSection(title = "Budgets to watch", onSeeAll = onSeeBudgets) {
+                    if (topBudgets.isEmpty()) {
+                        EmptySectionCard(
+                            message = "No budgets set yet. Add one to keep spending in check.",
+                            actionLabel = "Set a budget",
+                            onAction = onSeeBudgets
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            topBudgets.forEach { (cat, spentAmt, limit) ->
+                                BudgetGlanceRow(cat, spentAmt, limit)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        item {
-            DashboardSection(title = "Upcoming bills", onSeeAll = onSeeReminders) {
-                if (upcomingReminders.isEmpty()) {
-                    EmptySectionCard(
-                        message = "No reminders yet. Add bills or subscriptions so nothing sneaks up on you.",
-                        actionLabel = "Add a reminder",
-                        onAction = onSeeReminders
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        upcomingReminders.forEach { reminder -> UpcomingReminderRow(reminder) }
+            item {
+                DashboardSection(title = "Upcoming bills", onSeeAll = onSeeReminders) {
+                    if (upcomingReminders.isEmpty()) {
+                        EmptySectionCard(
+                            message = "No reminders yet. Add bills or subscriptions so nothing sneaks up on you.",
+                            actionLabel = "Add a reminder",
+                            onAction = onSeeReminders
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            upcomingReminders.forEach { reminder -> UpcomingReminderRow(reminder) }
+                        }
                     }
                 }
             }
-        }
 
-        item {
-            DashboardSection(title = "Recent activity", onSeeAll = onSeeAllTransactions) {
-                if (recentTransactions.isEmpty()) {
-                    EmptySectionCard(
-                        message = "No transactions captured yet. They'll show up here automatically.",
-                        actionLabel = "Add manually",
-                        onAction = onAddTransaction
-                    )
-                } else {
-                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
-                        Column {
-                            recentTransactions.forEach { tx -> TransactionRow(tx, timeFormat, onClick = {}) }
+            item {
+                DashboardSection(title = "Recent activity", onSeeAll = onSeeAllTransactions) {
+                    if (recentTransactions.isEmpty()) {
+                        EmptySectionCard(
+                            message = "No transactions captured yet. They'll show up here automatically.",
+                            actionLabel = "Add manually",
+                            onAction = onAddTransaction
+                        )
+                    } else {
+                        Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
+                            Column {
+                                recentTransactions.forEach { tx -> TransactionRow(tx, timeFormat, onClick = {}) }
+                            }
                         }
                     }
                 }
@@ -226,7 +243,7 @@ private fun MonthSummaryHeroCard(spent: Double, received: Double, net: Double, o
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
+                "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
@@ -247,7 +264,7 @@ private fun HeroStat(label: String, amount: Double) {
     Column {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f))
         Text(
-            "₹${"%.2f".format(amount)}",
+            "${formatInr(amount)}",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onPrimary,
@@ -292,7 +309,9 @@ private fun DashboardSection(title: String, onSeeAll: () -> Unit, content: @Comp
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
-        content()
+        Box(modifier = Modifier.animateContentSize()) {
+            content()
+        }
     }
 }
 
@@ -322,7 +341,7 @@ private fun EmptySectionCard(message: String, actionLabel: String, onAction: () 
 private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
     val fraction = if (limit > 0) (spent / limit).toFloat().coerceIn(0f, 1f) else 0f
     val barColor = when {
-        limit > 0 && spent > limit -> Color(0xFFD32F2F)
+        limit > 0 && spent > limit -> SemanticRed
         fraction > 0.7f -> Color(0xFFF57C00)
         else -> MaterialTheme.colorScheme.primary
     }
@@ -331,14 +350,14 @@ private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "₹${"%.0f".format(spent)} / ₹${"%.0f".format(limit)}",
+                    "${formatInrWhole(spent)} / ${formatInrWhole(limit)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
             Canvas(modifier = Modifier.fillMaxWidth().height(8.dp)) {
-                drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx(), 4.dp.toPx()))
+                drawRoundRect(color = SemanticGray.copy(alpha = 0.35f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx(), 4.dp.toPx()))
                 drawRoundRect(
                     color = barColor,
                     size = size.copy(width = size.width * fraction),
@@ -368,12 +387,12 @@ private fun UpcomingReminderRow(reminder: Reminder) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(reminder.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "Due day ${reminder.dueDayOfMonth}" + (reminder.amount?.let { " • ₹${"%.2f".format(it)}" } ?: ""),
+                    "Due day ${reminder.dueDayOfMonth}" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
             }
-            Icon(Icons.Filled.Receipt, contentDescription = null, tint = Color(0xFFBDBDBD))
+            Icon(Icons.Filled.Receipt, contentDescription = null, tint = SemanticGray)
         }
     }
 }

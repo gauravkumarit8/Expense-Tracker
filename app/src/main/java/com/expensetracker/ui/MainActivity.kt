@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -75,6 +76,9 @@ import com.autoexpensetracker.ui.theme.SemanticIndigo
 import com.autoexpensetracker.ui.theme.SemanticBrown
 import com.autoexpensetracker.ui.theme.SemanticGold
 import com.autoexpensetracker.util.BalanceVisibilityStore
+import com.autoexpensetracker.util.formatInr
+import com.autoexpensetracker.util.formatInrWhole
+import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -287,6 +291,16 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Target API 36 enforces edge-to-edge display unconditionally
+        // regardless of this call — but calling it explicitly is what
+        // gives the system bars automatic light/dark icon contrast
+        // matching the current theme, instead of leaving that to
+        // whatever default scrim the OS falls back to when an app hasn't
+        // opted in. The deprecated android:statusBarColor/
+        // navigationBarColor attributes in themes.xml are superseded by
+        // this on API 35+ (ignored there either way) — left in place only
+        // for the pre-Compose window on API <35, where they still apply.
+        enableEdgeToEdge()
         val db = AppDatabase.getInstance(applicationContext)
         val transactionDao = db.transactionDao()
         val reminderDao = db.reminderDao()
@@ -1526,7 +1540,7 @@ private fun StatCard(label: String, amount: Double, color: Color, isActive: Bool
         Column(modifier = Modifier.padding(12.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "₹${"%.2f".format(amount)}",
+                "${formatInr(amount)}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = color,
@@ -1576,7 +1590,7 @@ private fun NetSummaryCard(
             Column(modifier = Modifier.padding(12.dp)) {
                 Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
                 Text(
-                    "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
+                    "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = netColor,
@@ -1603,7 +1617,7 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
     if (!groupByDay) {
-        LazyColumn(contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)) {
+        LazyColumn(contentPadding = PaddingValues(bottom = 96.dp, top = 8.dp)) {
             items(transactions) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
         }
         return
@@ -1612,7 +1626,7 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
     val dayFormat = remember { SimpleDateFormat("EEE, d MMM", Locale.getDefault()) }
     val grouped = remember(transactions) { transactions.groupBy { dayFormat.format(Date(it.timestampMillis)) } }
 
-    LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         grouped.forEach { (day, items) ->
             item { Text(day, style = MaterialTheme.typography.labelMedium, color = Color.Gray, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)) }
             items(items) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
@@ -1645,7 +1659,7 @@ internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onCli
                 )
                 if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 1)
             }
-            Text("${if (isSent) "-" else "+"}₹${"%.2f".format(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
+            Text("${if (isSent) "-" else "+"}${formatInr(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
         }
     }
 }
@@ -1752,9 +1766,9 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 } else {
-                    Text("₹${"%.2f".format(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                     if (transaction.balanceAfter != null) {
-                        Text("Balance after: ₹${"%.2f".format(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -1903,6 +1917,21 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     val context = LocalContext.current
     var balancesVisible by remember { mutableStateOf(BalanceVisibilityStore.isVisible(context)) }
 
+    // Manual overrides/additions/deletions for the balances section — see
+    // ManualBalanceStore doc comment. Re-read after every mutation rather
+    // than kept as a Flow, matching this screen's existing pattern for
+    // BalanceVisibilityStore above (small, infrequently-changed local
+    // preference state, not data that changes from outside this screen).
+    var manualEntries by remember { mutableStateOf(ManualBalanceStore.getAll(context)) }
+    var hiddenSources by remember { mutableStateOf(ManualBalanceStore.getHidden(context)) }
+    var editingSource by remember { mutableStateOf<String?>(null) }
+    var showAddBalanceDialog by remember { mutableStateOf(false) }
+
+    fun refreshManualBalances() {
+        manualEntries = ManualBalanceStore.getAll(context)
+        hiddenSources = ManualBalanceStore.getHidden(context)
+    }
+
     val now = Calendar.getInstance()
     val startOfMonth = (now.clone() as Calendar).apply {
         set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -1910,13 +1939,29 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
 
     // Latest known balance per bank/account source — most recent transaction
     // (by timestamp) that happened to include a parsed balanceAfter value.
-    val latestBalances = remember(allTransactions) {
+    val autoBalances = remember(allTransactions) {
         allTransactions
             .filter { it.balanceAfter != null }
             .groupBy { it.bankOrSource }
             .mapValues { (_, txs) -> txs.maxByOrNull { it.timestampMillis }!! }
-            .toList()
-            .sortedByDescending { it.second.timestampMillis }
+    }
+
+    // Merge auto-detected balances with manual overrides/additions, drop
+    // anything the user has deleted, sort newest-first. A manual entry for
+    // a source that also has auto-detected transactions wins outright
+    // (see ManualBalanceStore doc comment on why that's unconditional).
+    data class BalanceEntry(val source: String, val amount: Double, val asOfMillis: Long, val isManual: Boolean)
+
+    val latestBalances = remember(autoBalances, manualEntries, hiddenSources) {
+        val manualBySource = manualEntries.associateBy { it.source }
+        val autoOnly = autoBalances.keys.minus(manualBySource.keys).map { source ->
+            val tx = autoBalances.getValue(source)
+            BalanceEntry(source, tx.balanceAfter!!, tx.timestampMillis, isManual = false)
+        }
+        val manual = manualEntries.map { BalanceEntry(it.source, it.amount, it.asOfMillis, isManual = true) }
+        (autoOnly + manual)
+            .filterNot { hiddenSources.contains(it.source) }
+            .sortedByDescending { it.asOfMillis }
     }
 
     val thisMonthSpend = remember(allTransactions) {
@@ -1928,12 +1973,43 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
             .toList().sortedByDescending { it.second }
     }
 
+    if (showAddBalanceDialog) {
+        AddOrEditBalanceDialog(
+            initialSource = null,
+            onDismiss = { showAddBalanceDialog = false },
+            onSave = { source, amount ->
+                ManualBalanceStore.upsert(context, source, amount)
+                refreshManualBalances()
+                showAddBalanceDialog = false
+            }
+        )
+    }
+    editingSource?.let { source ->
+        val current = latestBalances.firstOrNull { it.source == source }
+        AddOrEditBalanceDialog(
+            initialSource = source,
+            initialAmount = current?.amount,
+            onDismiss = { editingSource = null },
+            onSave = { _, amount ->
+                ManualBalanceStore.upsert(context, source, amount)
+                refreshManualBalances()
+                editingSource = null
+            }
+        )
+    }
+
     if (byCategory.isEmpty() && latestBalances.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("No spending this month yet", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedButton(onClick = { showAddBalanceDialog = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Add an account balance")
+                }
             }
         }
         return
@@ -1942,16 +2018,19 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
     val total = byCategory.sumOf { it.second }
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
-        if (latestBalances.isNotEmpty()) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Account balances", style = MaterialTheme.typography.titleMedium)
-                        Text("Latest known balance per account (from captured messages)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Account balances", style = MaterialTheme.typography.titleMedium)
+                    Text("Latest known balance per account", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAddBalanceDialog = true }) {
+                        Icon(Icons.Filled.AddCircle, contentDescription = "Add account balance", tint = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = {
                         balancesVisible = !balancesVisible
@@ -1964,10 +2043,32 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(10.dp))
             }
-            items(latestBalances) { (source, tx) ->
-                BalanceRow(source, tx.balanceAfter!!, tx.timestampMillis, visible = balancesVisible)
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+        if (latestBalances.isEmpty()) {
+            item {
+                Text(
+                    "No account balances yet — captured messages with a balance will show up here, or add one manually.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+        } else {
+            items(latestBalances, key = { it.source }) { entry ->
+                BalanceRow(
+                    source = entry.source,
+                    balance = entry.amount,
+                    asOfMillis = entry.asOfMillis,
+                    visible = balancesVisible,
+                    isManual = entry.isManual,
+                    onEdit = { editingSource = entry.source },
+                    onDelete = {
+                        ManualBalanceStore.delete(context, entry.source)
+                        refreshManualBalances()
+                    }
+                )
                 Spacer(modifier = Modifier.height(8.dp))
             }
             item { Spacer(modifier = Modifier.height(20.dp)) }
@@ -1976,7 +2077,7 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
         if (byCategory.isNotEmpty()) {
             item {
                 Text("This month's spending by category", style = MaterialTheme.typography.titleMedium)
-                Text("Total: ₹${"%.2f".format(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                Text("Total: ${formatInr(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 Spacer(modifier = Modifier.height(16.dp))
             }
             items(byCategory) { (category, amount) ->
@@ -1988,21 +2089,105 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
 }
 
 @Composable
-private fun BalanceRow(source: String, balance: Double, asOfMillis: Long, visible: Boolean) {
+private fun BalanceRow(
+    source: String,
+    balance: Double,
+    asOfMillis: Long,
+    visible: Boolean,
+    isManual: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Remove $source?") },
+            text = { Text("This hides it from Account balances. If new messages from this bank arrive later, add it back manually to show it again.") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } }
+        )
+    }
+
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text(source, fontWeight = FontWeight.Medium)
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(source, fontWeight = FontWeight.Medium)
+                    if (isManual) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("(manual)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    }
+                }
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Text(
-                if (visible) "₹${"%.2f".format(balance)}" else "₹ • • • • • •",
+                if (visible) "${formatInr(balance)}" else "₹ • • • • • •",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
+            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = Color.Gray, modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
+            }
         }
     }
+}
+
+@Composable
+private fun AddOrEditBalanceDialog(
+    initialSource: String?,
+    initialAmount: Double? = null,
+    onDismiss: () -> Unit,
+    onSave: (source: String, amount: Double) -> Unit
+) {
+    var source by remember { mutableStateOf(initialSource ?: "") }
+    var amount by remember { mutableStateOf(initialAmount?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() } ?: "") }
+    val isEditing = initialSource != null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isEditing) "Edit balance" else "Add account balance") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = source,
+                    onValueChange = { source = it },
+                    label = { Text("Account / bank name") },
+                    singleLine = true,
+                    enabled = !isEditing,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Current balance") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val amt = amount.toDoubleOrNull() ?: return@TextButton
+                    val src = source.trim()
+                    if (src.isEmpty()) return@TextButton
+                    onSave(src, amt)
+                },
+                enabled = amount.toDoubleOrNull() != null && source.isNotBlank()
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
@@ -2011,7 +2196,7 @@ private fun CategoryBarRow(category: Category, amount: Double, total: Double) {
     Column {
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text("${category.emoji} ${category.label}", style = MaterialTheme.typography.bodyMedium)
-            Text("₹${"%.2f".format(amount)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text("${formatInr(amount)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         }
         Spacer(modifier = Modifier.height(4.dp))
         Canvas(modifier = Modifier.fillMaxWidth().height(14.dp)) {
@@ -2074,7 +2259,7 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium)
                 Text(
-                    if (limit != null) "₹${"%.0f".format(spent)} / ₹${"%.0f".format(limit)}" else "No limit set",
+                    if (limit != null) "${formatInrWhole(spent)} / ${formatInrWhole(limit)}" else "No limit set",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray
                 )
             }
@@ -2092,7 +2277,7 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
                 }
                 if (spent > limit) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Over budget by ₹${"%.2f".format(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = SemanticRed)
+                    Text("Over budget by ${formatInr(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = SemanticRed)
                 }
             }
         }
@@ -2150,7 +2335,16 @@ private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tran
             }
         }
     } else {
-        LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        val confirmedTotal = remember(reminders) { reminders.mapNotNull { it.amount }.sum() }
+        val detectedTotal = remember(suggestions) { suggestions.sumOf { it.averageAmount } }
+
+        LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp)) {
+            if (confirmedTotal > 0 || detectedTotal > 0) {
+                item {
+                    MonthlyRecurringSpendCard(confirmedTotal = confirmedTotal, detectedTotal = detectedTotal)
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
             if (suggestions.isNotEmpty()) {
                 item {
                     Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
@@ -2191,12 +2385,52 @@ private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tran
 }
 
 @Composable
+private fun MonthlyRecurringSpendCard(confirmedTotal: Double, detectedTotal: Double) {
+    val total = confirmedTotal + detectedTotal
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primaryContainer
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Monthly recurring spend",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${formatInr(total)}",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            if (detectedTotal > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "${formatInr(confirmedTotal)} tracked + ${formatInr(detectedTotal)} detected but not yet added below",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Across all reminders with a known amount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit, onDismiss: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color(0xFFEDE7F6)) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(suggestion.merchant, fontWeight = FontWeight.Medium)
             Text(
-                "~₹${"%.2f".format(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
+                "~${formatInr(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -2219,7 +2453,7 @@ private fun ReminderRow(reminder: Reminder, onDelete: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(reminder.title, fontWeight = FontWeight.Medium)
                 Text(
-                    "Due day ${reminder.dueDayOfMonth} of month" + (reminder.amount?.let { " • ₹${"%.2f".format(it)}" } ?: ""),
+                    "Due day ${reminder.dueDayOfMonth} of month" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray
                 )
                 if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)

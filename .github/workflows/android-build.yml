@@ -87,6 +87,15 @@ jobs:
       - name: Build release AAB
         run: ./gradlew bundleRelease --stacktrace
 
+      # The AAB above is what goes to Play Console, but it can't be
+      # installed directly on a device (Play Store itself generates
+      # installable APKs from it at delivery time) — this APK is what you
+      # actually sideload to test the release build's real behavior
+      # (minification, ProGuard rules, everything) before applying for
+      # production, without needing bundletool.
+      - name: Build release APK (for sideload testing)
+        run: ./gradlew assembleRelease --stacktrace
+
       - name: Clean up keystore
         if: always()
         run: rm -f release.keystore keystore.properties
@@ -103,4 +112,11 @@ jobs:
         with:
           name: app-release-aab
           path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
