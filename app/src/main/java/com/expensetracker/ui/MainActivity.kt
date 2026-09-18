@@ -76,6 +76,8 @@ import com.autoexpensetracker.ui.theme.SemanticIndigo
 import com.autoexpensetracker.ui.theme.SemanticBrown
 import com.autoexpensetracker.ui.theme.SemanticGold
 import com.autoexpensetracker.util.BalanceVisibilityStore
+import com.autoexpensetracker.util.formatInr
+import com.autoexpensetracker.util.formatInrWhole
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
@@ -1538,7 +1540,7 @@ private fun StatCard(label: String, amount: Double, color: Color, isActive: Bool
         Column(modifier = Modifier.padding(12.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "₹${"%.2f".format(amount)}",
+                "${formatInr(amount)}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = color,
@@ -1588,7 +1590,7 @@ private fun NetSummaryCard(
             Column(modifier = Modifier.padding(12.dp)) {
                 Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
                 Text(
-                    "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
+                    "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = netColor,
@@ -1615,7 +1617,7 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
     if (!groupByDay) {
-        LazyColumn(contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp)) {
+        LazyColumn(contentPadding = PaddingValues(bottom = 96.dp, top = 8.dp)) {
             items(transactions) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
         }
         return
@@ -1624,7 +1626,7 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
     val dayFormat = remember { SimpleDateFormat("EEE, d MMM", Locale.getDefault()) }
     val grouped = remember(transactions) { transactions.groupBy { dayFormat.format(Date(it.timestampMillis)) } }
 
-    LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         grouped.forEach { (day, items) ->
             item { Text(day, style = MaterialTheme.typography.labelMedium, color = Color.Gray, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)) }
             items(items) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
@@ -1657,7 +1659,7 @@ internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onCli
                 )
                 if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 1)
             }
-            Text("${if (isSent) "-" else "+"}₹${"%.2f".format(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
+            Text("${if (isSent) "-" else "+"}${formatInr(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
         }
     }
 }
@@ -1764,9 +1766,9 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 } else {
-                    Text("₹${"%.2f".format(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                     if (transaction.balanceAfter != null) {
-                        Text("Balance after: ₹${"%.2f".format(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -2075,7 +2077,7 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
         if (byCategory.isNotEmpty()) {
             item {
                 Text("This month's spending by category", style = MaterialTheme.typography.titleMedium)
-                Text("Total: ₹${"%.2f".format(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                Text("Total: ${formatInr(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 Spacer(modifier = Modifier.height(16.dp))
             }
             items(byCategory) { (category, amount) ->
@@ -2124,7 +2126,7 @@ private fun BalanceRow(
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Text(
-                if (visible) "₹${"%.2f".format(balance)}" else "₹ • • • • • •",
+                if (visible) "${formatInr(balance)}" else "₹ • • • • • •",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
@@ -2194,7 +2196,7 @@ private fun CategoryBarRow(category: Category, amount: Double, total: Double) {
     Column {
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text("${category.emoji} ${category.label}", style = MaterialTheme.typography.bodyMedium)
-            Text("₹${"%.2f".format(amount)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text("${formatInr(amount)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         }
         Spacer(modifier = Modifier.height(4.dp))
         Canvas(modifier = Modifier.fillMaxWidth().height(14.dp)) {
@@ -2257,7 +2259,7 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium)
                 Text(
-                    if (limit != null) "₹${"%.0f".format(spent)} / ₹${"%.0f".format(limit)}" else "No limit set",
+                    if (limit != null) "${formatInrWhole(spent)} / ${formatInrWhole(limit)}" else "No limit set",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray
                 )
             }
@@ -2275,7 +2277,7 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
                 }
                 if (spent > limit) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Over budget by ₹${"%.2f".format(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = SemanticRed)
+                    Text("Over budget by ${formatInr(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = SemanticRed)
                 }
             }
         }
@@ -2336,7 +2338,7 @@ private fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tran
         val confirmedTotal = remember(reminders) { reminders.mapNotNull { it.amount }.sum() }
         val detectedTotal = remember(suggestions) { suggestions.sumOf { it.averageAmount } }
 
-        LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp)) {
             if (confirmedTotal > 0 || detectedTotal > 0) {
                 item {
                     MonthlyRecurringSpendCard(confirmedTotal = confirmedTotal, detectedTotal = detectedTotal)
@@ -2398,7 +2400,7 @@ private fun MonthlyRecurringSpendCard(confirmedTotal: Double, detectedTotal: Dou
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "₹${"%.2f".format(total)}",
+                "${formatInr(total)}",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -2406,7 +2408,7 @@ private fun MonthlyRecurringSpendCard(confirmedTotal: Double, detectedTotal: Dou
             if (detectedTotal > 0) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    "₹${"%.2f".format(confirmedTotal)} tracked + ₹${"%.2f".format(detectedTotal)} detected but not yet added below",
+                    "${formatInr(confirmedTotal)} tracked + ${formatInr(detectedTotal)} detected but not yet added below",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                 )
@@ -2428,7 +2430,7 @@ private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit,
         Column(modifier = Modifier.padding(12.dp)) {
             Text(suggestion.merchant, fontWeight = FontWeight.Medium)
             Text(
-                "~₹${"%.2f".format(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
+                "~${formatInr(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -2451,7 +2453,7 @@ private fun ReminderRow(reminder: Reminder, onDelete: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(reminder.title, fontWeight = FontWeight.Medium)
                 Text(
-                    "Due day ${reminder.dueDayOfMonth} of month" + (reminder.amount?.let { " • ₹${"%.2f".format(it)}" } ?: ""),
+                    "Due day ${reminder.dueDayOfMonth} of month" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray
                 )
                 if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)

@@ -41,6 +41,8 @@ import com.autoexpensetracker.data.Transaction
 import com.autoexpensetracker.ui.theme.SemanticGray
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.util.MonthRange
+import com.autoexpensetracker.util.formatInr
+import com.autoexpensetracker.util.formatInrWhole
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -137,7 +139,7 @@ internal fun DashboardScreen(
         enter = fadeIn(animationSpec = tween(350)) + slideInVertically(animationSpec = tween(350)) { it / 8 }
     ) {
         LazyColumn(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             item {
@@ -241,7 +243,7 @@ private fun MonthSummaryHeroCard(spent: Double, received: Double, net: Double, o
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "${if (net >= 0) "+" else "−"}₹${"%.2f".format(kotlin.math.abs(net))}",
+                "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
@@ -262,7 +264,7 @@ private fun HeroStat(label: String, amount: Double) {
     Column {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f))
         Text(
-            "₹${"%.2f".format(amount)}",
+            "${formatInr(amount)}",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onPrimary,
@@ -348,7 +350,7 @@ private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "₹${"%.0f".format(spent)} / ₹${"%.0f".format(limit)}",
+                    "${formatInrWhole(spent)} / ${formatInrWhole(limit)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -385,7 +387,7 @@ private fun UpcomingReminderRow(reminder: Reminder) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(reminder.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "Due day ${reminder.dueDayOfMonth}" + (reminder.amount?.let { " • ₹${"%.2f".format(it)}" } ?: ""),
+                    "Due day ${reminder.dueDayOfMonth}" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
