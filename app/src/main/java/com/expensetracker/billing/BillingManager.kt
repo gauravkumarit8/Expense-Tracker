@@ -79,12 +79,39 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
             _isPro.value = activeSub != null
             _activePurchase.value = activeSub
 
-            // Purchases must be acknowledged within 3 days
+            // Purchases must be acknowledged within 3 days or Google
+            // Play automatically refunds them — silently discarding the
+            // result here (as this previously did) means a failed
+            // acknowledgment (network blip, transient billing service
+            // issue, anything) would go completely unnoticed until a
+            // paying customer's subscription just vanished 3 days later
+            // with no error trail to explain why. Logging failures at
+            // minimum surfaces it in crash/logcat monitoring; a single
+            // retry covers the common transient case without adding
+            // real complexity (queryActiveSubscription already re-runs
+            // on every app foreground per its call sites, so a
+            // still-unacknowledged purchase gets another attempt soon
+            // regardless — this retry just doesn't wait for that).
             if (activeSub != null && !activeSub.isAcknowledged) {
                 val ackParams = AcknowledgePurchaseParams.newBuilder()
                     .setPurchaseToken(activeSub.purchaseToken)
                     .build()
-                billingClient.acknowledgePurchase(ackParams) { }
+                billingClient.acknowledgePurchase(ackParams) { ackResult ->
+                    if (ackResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                        Log.w(
+                            "BillingManager",
+                            "Purchase acknowledgment failed (code=${ackResult.responseCode}, ${ackResult.debugMessage}) — retrying once"
+                        )
+                        billingClient.acknowledgePurchase(ackParams) { retryResult ->
+                            if (retryResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                                Log.e(
+                                    "BillingManager",
+                                    "Purchase acknowledgment retry also failed (code=${retryResult.responseCode}, ${retryResult.debugMessage}) — will be retried again on next subscription check"
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

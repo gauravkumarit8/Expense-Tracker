@@ -29,6 +29,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -2057,12 +2061,25 @@ private fun ChartsScreen(allTransactions: List<Transaction>) {
             }
         } else {
             items(latestBalances, key = { it.source }) { entry ->
+                // The balanceAfter parsed off every transaction already forms a
+                // real historical timeline per source — never charted before
+                // now. Only meaningful for auto-detected sources (a purely
+                // manual entry has no transactions to derive history from);
+                // BalanceHistoryDialog handles an empty/single-point list
+                // gracefully rather than this needing to special-case it here.
+                val history = remember(allTransactions, entry.source) {
+                    allTransactions
+                        .filter { it.bankOrSource == entry.source && it.balanceAfter != null }
+                        .sortedBy { it.timestampMillis }
+                        .map { it.timestampMillis to it.balanceAfter!! }
+                }
                 BalanceRow(
                     source = entry.source,
                     balance = entry.amount,
                     asOfMillis = entry.asOfMillis,
                     visible = balancesVisible,
                     isManual = entry.isManual,
+                    history = history,
                     onEdit = { editingSource = entry.source },
                     onDelete = {
                         ManualBalanceStore.delete(context, entry.source)
@@ -2095,10 +2112,12 @@ private fun BalanceRow(
     asOfMillis: Long,
     visible: Boolean,
     isManual: Boolean,
+    history: List<Pair<Long, Double>>,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
 
     if (showDeleteConfirm) {
@@ -2112,32 +2131,109 @@ private fun BalanceRow(
             dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } }
         )
     }
+    if (showHistory) {
+        BalanceHistoryDialog(source = source, history = history, visible = visible, onDismiss = { showHistory = false })
+    }
 
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
-        Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
                     Text(source, fontWeight = FontWeight.Medium)
                     if (isManual) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("(manual)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                     }
                 }
+                Text(
+                    if (visible) formatInr(balance) else "₹ • • • • • •",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            }
-            Text(
-                if (visible) "${formatInr(balance)}" else "₹ • • • • • •",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = Color.Gray, modifier = Modifier.size(18.dp))
-            }
-            IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showHistory = true }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun BalanceHistoryDialog(
+    source: String,
+    history: List<Pair<Long, Double>>,
+    visible: Boolean,
+    onDismiss: () -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("$source balance history") },
+        text = {
+            if (history.size < 2) {
+                Text(
+                    "Not enough history yet to chart — this builds up automatically as more transactions are captured for this account. " +
+                        "Manually-added balances don't have a history, since each edit replaces the previous figure rather than tracking it over time.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                Column {
+                    val minY = history.minOf { it.second }
+                    val maxY = history.maxOf { it.second }
+                    Text(
+                        if (visible) "${formatInr(maxY)}" else "₹ • • • • • •",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                    Canvas(modifier = Modifier.fillMaxWidth().height(160.dp).padding(vertical = 4.dp)) {
+                        val yRange = (maxY - minY).takeIf { it > 0.0 } ?: 1.0
+                        val stepX = if (history.size > 1) size.width / (history.size - 1) else 0f
+                        fun pointOffset(index: Int, value: Double): Offset {
+                            val x = index * stepX
+                            val y = size.height - ((value - minY) / yRange * size.height).toFloat()
+                            return Offset(x, y)
+                        }
+                        val path = Path()
+                        history.forEachIndexed { i, (_, y) ->
+                            val p = pointOffset(i, y)
+                            if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+                        }
+                        drawPath(path, color = BrandGreen, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
+                        history.forEachIndexed { i, (_, y) ->
+                            drawCircle(color = BrandGreen, radius = 4.dp.toPx(), center = pointOffset(i, y))
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(dateFormat.format(Date(history.first().first)), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text(dateFormat.format(Date(history.last().first)), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        if (visible) "Lowest: ${formatInr(minY)}" else "Lowest: ₹ • • • • • •",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                    Text(
+                        "${history.size} balance points captured",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
 }
 
 @Composable
