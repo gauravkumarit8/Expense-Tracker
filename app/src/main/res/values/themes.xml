@@ -8,12 +8,20 @@
          branding. Kept the same platform theme as parent rather than
          adding a Material Components / AppCompat dependency just for a
          DayNight base — lower risk given this can't be compile-tested
-         here — but overrode the attributes that actually control what's
+         here — but overrode the attribute that actually controls what's
          visible before Compose takes over. See REQUIREMENTS.md ยง13 and
-         ui/theme/Theme.kt for the corresponding Compose-side fix. -->
+         ui/theme/Theme.kt for the corresponding Compose-side fix.
+
+         2026-09-20: removed statusBarColor/navigationBarColor — Play
+         Console's pre-launch report flags these as deprecated
+         edge-to-edge APIs for any app targeting API 35+, regardless of
+         whether enableEdgeToEdge() (called in MainActivity.onCreate)
+         makes them functionally inert at runtime. System bar appearance
+         is now controlled entirely by enableEdgeToEdge()'s explicit
+         SystemBarStyle, kept in sync with the resolved app theme
+         (including manual dark/light/AMOLED overrides) via a SideEffect
+         in ExpenseTrackerTheme — see Theme.kt. -->
     <style name="Theme.ExpenseTracker" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/brand_background_light</item>
-        <item name="android:statusBarColor">@color/brand_green</item>
-        <item name="android:navigationBarColor">@color/brand_background_light</item>
     </style>
 </resources>

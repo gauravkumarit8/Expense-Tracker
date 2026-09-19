@@ -126,14 +126,18 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Target API 36 enforces edge-to-edge display unconditionally
-        // regardless of this call — but calling it explicitly is what
-        // gives the system bars automatic light/dark icon contrast
-        // matching the current theme, instead of leaving that to
-        // whatever default scrim the OS falls back to when an app hasn't
-        // opted in. The deprecated android:statusBarColor/
-        // navigationBarColor attributes in themes.xml are superseded by
-        // this on API 35+ (ignored there either way) — left in place only
-        // for the pre-Compose window on API <35, where they still apply.
+        // regardless of this call — but calling it explicitly here, this
+        // early, avoids any flash of wrong system-bar styling before
+        // Compose's first frame mounts. ExpenseTrackerTheme's own
+        // SideEffect (see Theme.kt) re-invokes this with the correct
+        // light/dark SystemBarStyle once the resolved theme is known —
+        // including a manual dark/light/AMOLED override from Settings,
+        // which this earlier, theme-unaware call can't account for on
+        // its own. The deprecated android:statusBarColor/
+        // navigationBarColor theme attributes, and a legacy
+        // window.statusBarColor-setting SideEffect that actively fought
+        // against edge-to-edge on every recomposition, were both removed
+        // 2026-09-20 after Play Console flagged them directly.
         enableEdgeToEdge()
         val db = AppDatabase.getInstance(applicationContext)
         val transactionDao = db.transactionDao()

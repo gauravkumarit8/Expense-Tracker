@@ -1,7 +1,9 @@
 package com.autoexpensetracker.ui.theme
 
-import android.app.Activity
 import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -11,10 +13,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 import com.autoexpensetracker.util.ThemeMode
 
 /**
@@ -120,12 +120,28 @@ fun ExpenseTrackerTheme(
         else -> LightColors
     }
 
+    // 2026-09-20: this used to set window.statusBarColor directly — one
+    // of the exact APIs Android 15 flags as deprecated for any app
+    // targeting API 35+ that also calls enableEdgeToEdge() (as
+    // MainActivity.onCreate does). Worse, actively setting a solid status
+    // bar color here was fighting against edge-to-edge on every single
+    // recomposition, which is almost certainly the real cause of Play
+    // Console's "Edge-to-edge may not display for all users" warning —
+    // not just the (now also removed) themes.xml attributes. Replaced
+    // with enableEdgeToEdge()'s own SystemBarStyle API, re-invoked here
+    // so it stays correct when the resolved theme changes — including a
+    // manual dark/light/AMOLED override from Settings, not just the
+    // system setting, which the plain onCreate-time call alone can't
+    // track since it runs once, before Compose has read any preference.
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            val activity = view.context as? ComponentActivity
+            val scrimColor = android.graphics.Color.TRANSPARENT
+            activity?.enableEdgeToEdge(
+                statusBarStyle = if (darkTheme) SystemBarStyle.dark(scrimColor) else SystemBarStyle.light(scrimColor, scrimColor),
+                navigationBarStyle = if (darkTheme) SystemBarStyle.dark(scrimColor) else SystemBarStyle.light(scrimColor, scrimColor)
+            )
         }
     }
 
