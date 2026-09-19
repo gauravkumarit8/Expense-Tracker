@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Expense Tracker</string>
+    <string name="widget_description">This month\'s net spend, sent, and received at a glance</string>
 </resources>

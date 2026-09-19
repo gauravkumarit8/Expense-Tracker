@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain RemoteViews-compatible layout (no Compose here) — Glance
+     requires a conventional initialLayout as a brief fallback before its
+     own composable content first renders. Kept intentionally minimal. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#2E7D32"
+    android:gravity="center"
+    android:padding="16dp"
+    android:text="@string/app_name"
+    android:textColor="#FFFFFF"
+    android:textSize="14sp" />

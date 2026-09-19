@@ -10,6 +10,7 @@ import com.autoexpensetracker.data.InsertOutcome
 import com.autoexpensetracker.parser.TransactionParser
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.util.UnusualSpendDetector
+import com.autoexpensetracker.widget.WidgetRefresher
 
 /**
  * Runs off the main/callback thread. Parses the raw text, discards it, and
@@ -52,6 +53,7 @@ class ParseAndStoreWorker(
                 if (outcome.id > 0) {
                     UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = outcome.id))
                     ReviewPromptStore.recordCapturedTransaction(applicationContext)
+                    WidgetRefresher.refresh(applicationContext)
                 }
             }
             is InsertOutcome.ExactDuplicateSkipped -> {
