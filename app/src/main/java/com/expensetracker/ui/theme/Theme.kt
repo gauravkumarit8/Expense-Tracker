@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import com.autoexpensetracker.util.ThemeMode
 
 /**
  * 2026-09-08: replaces the previous bare `MaterialTheme { ... }` call in
@@ -62,25 +63,59 @@ private val DarkColors = darkColorScheme(
     outline = SemanticGray
 )
 
+// Same tonal roles as DarkColors — only background/surface differ (pure
+// black, not the warmed dark-green tone) — everything else (text
+// contrast, brand green accents, error color) stays identical, so
+// switching between DARK and AMOLED never changes anything except how
+// black the backdrop is.
+private val AmoledColors = darkColorScheme(
+    primary = BrandGreenLight,
+    onPrimary = BrandGreenDark,
+    primaryContainer = BrandGreenDark,
+    onPrimaryContainer = BrandGreenContainerLight,
+    secondary = SemanticIndigo,
+    onSecondary = Color.White,
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    background = AmoledBlack,
+    onBackground = Color(0xFFE3E5E3),
+    surface = AmoledSurface,
+    onSurface = Color(0xFFE3E5E3),
+    surfaceVariant = Color(0xFF161616),
+    onSurfaceVariant = Color(0xFFC4C8C3),
+    outline = SemanticGray
+)
+
 /**
- * [dynamicColor] defaults to false, not true — this app has a deliberate,
- * specific green brand identity (the rupee-glyph icon), and Material You's
- * dynamic theming would override it with colors extracted from the user's
- * wallpaper, which could easily drift away from that identity on a given
- * device. Available as a parameter rather than removed entirely, in case
- * that tradeoff is ever revisited.
+ * [themeMode] defaults to [ThemeMode.SYSTEM], preserving prior behavior
+ * exactly (system dark/light was previously the *only* option, not a
+ * default with alternatives). [dynamicColor] defaults to false, not
+ * true — this app has a deliberate, specific green brand identity (the
+ * rupee-glyph icon), and Material You's dynamic theming would override
+ * it with colors extracted from the user's wallpaper, which could easily
+ * drift away from that identity on a given device. Available as a
+ * parameter rather than removed entirely, in case that tradeoff is ever
+ * revisited.
  */
 @Composable
 fun ExpenseTrackerTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val systemDark = isSystemInDarkTheme()
+    val darkTheme = when (themeMode) {
+        ThemeMode.SYSTEM -> systemDark
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK, ThemeMode.AMOLED -> true
+    }
+
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
+        themeMode == ThemeMode.AMOLED -> AmoledColors
         darkTheme -> DarkColors
         else -> LightColors
     }
