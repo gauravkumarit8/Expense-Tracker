@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  minWidth/minHeight sized for a 3x2 cell home-screen area (roughly
+  180dp x 110dp with standard 5-column launchers) — enough room for the
+  three-number layout (net, sent, received) without cramming.
+  updatePeriodMillis is set to the platform-enforced minimum (30 min);
+  this is a periodic *fallback* refresh only — the real refresh trigger
+  is ParseAndStoreWorker explicitly requesting an update whenever a new
+  transaction is actually captured (see WidgetRefresher), so the widget
+  reflects new data within moments of capture rather than waiting up to
+  30 minutes for the periodic tick.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_loading"
+    android:previewImage="@mipmap/ic_launcher"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:description="@string/widget_description" />
