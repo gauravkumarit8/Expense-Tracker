@@ -19,10 +19,15 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.TrendingDown
+import androidx.compose.material.icons.filled.TrendingFlat
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -70,6 +75,13 @@ import java.util.Locale
  * instead of `private`) from MainActivity.kt so a transaction looks
  * identical whether seen here or on the Transactions tab.
  */
+/** Comparison basis for the "Today's spending" trend card. */
+private enum class SpendComparisonPeriod(val label: String) {
+    YESTERDAY("vs yesterday"),
+    LAST_WEEK("vs last week"),
+    LAST_MONTH("vs last month")
+}
+
 @Composable
 internal fun DashboardScreen(
     budgetDao: BudgetDao,
@@ -92,6 +104,36 @@ internal fun DashboardScreen(
         monthTransactions.filter { it.direction == Direction.RECEIVED }.sumOf { it.amount }
     }
     val net = received - spent
+
+    // Today vs a comparable prior day — deliberately a single day-to-day
+    // comparison for all three basis options (not "today vs this whole
+    // week"), so the number is always answering the same question ("was
+    // I up or down on a typical day") regardless of which basis is
+    // selected. LAST_MONTH uses Calendar.MONTH - 1 on the same
+    // day-of-month, which can land oddly for day 29-31 in a
+    // shorter/longer month — an accepted rough edge for a comparison
+    // feature, not a precision accounting figure.
+    var comparisonPeriod by remember { mutableStateOf(SpendComparisonPeriod.YESTERDAY) }
+    fun startOfDay(cal: Calendar): Long = (cal.clone() as Calendar).apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    fun spendOnDay(dayStartMillis: Long): Double {
+        val dayEndMillis = dayStartMillis + 24L * 60 * 60 * 1000
+        return allTransactions
+            .filter { it.direction == Direction.SENT && it.timestampMillis in dayStartMillis until dayEndMillis }
+            .sumOf { it.amount }
+    }
+    val todaySpend = remember(allTransactions) { spendOnDay(startOfDay(Calendar.getInstance())) }
+    val comparisonSpend = remember(allTransactions, comparisonPeriod) {
+        val comparisonCal = Calendar.getInstance().apply {
+            when (comparisonPeriod) {
+                SpendComparisonPeriod.YESTERDAY -> add(Calendar.DAY_OF_MONTH, -1)
+                SpendComparisonPeriod.LAST_WEEK -> add(Calendar.DAY_OF_MONTH, -7)
+                SpendComparisonPeriod.LAST_MONTH -> add(Calendar.MONTH, -1)
+            }
+        }
+        spendOnDay(startOfDay(comparisonCal))
+    }
 
     val budgets by budgetDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val spendByCategory = remember(monthTransactions) {
@@ -165,6 +207,15 @@ internal fun DashboardScreen(
             }
 
             item {
+                TodaySpendCard(
+                    todaySpend = todaySpend,
+                    comparisonSpend = comparisonSpend,
+                    comparisonPeriod = comparisonPeriod,
+                    onComparisonPeriodChange = { comparisonPeriod = it }
+                )
+            }
+
+            item {
                 DashboardSection(title = "Budgets to watch", onSeeAll = onSeeBudgets) {
                     if (topBudgets.isEmpty()) {
                         EmptySectionCard(
@@ -214,6 +265,57 @@ internal fun DashboardScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodaySpendCard(
+    todaySpend: Double,
+    comparisonSpend: Double,
+    comparisonPeriod: SpendComparisonPeriod,
+    onComparisonPeriodChange: (SpendComparisonPeriod) -> Unit
+) {
+    // Spending MORE than the comparison day is the "bad" direction here
+    // (red, trending up) and spending LESS is "good" (green, trending
+    // down) — the reverse of how up/down colors usually work for e.g. a
+    // stock price, which is intentional: this is a spend tracker, not an
+    // investment tracker, and less spending is the desired direction.
+    val (trendIcon, trendColor, trendText) = when {
+        comparisonSpend <= 0.0 && todaySpend <= 0.0 -> Triple(Icons.Filled.TrendingFlat, Color.Gray, "No spending yet")
+        comparisonSpend <= 0.0 -> Triple(Icons.Filled.TrendingUp, SemanticRed, "No spend that day to compare")
+        else -> {
+            val percent = ((todaySpend - comparisonSpend) / comparisonSpend) * 100
+            when {
+                percent > 0.5 -> Triple(Icons.Filled.TrendingUp, SemanticRed, "+${"%.0f".format(percent)}% ${comparisonPeriod.label}")
+                percent < -0.5 -> Triple(Icons.Filled.TrendingDown, MaterialTheme.colorScheme.primary, "${"%.0f".format(percent)}% ${comparisonPeriod.label}")
+                else -> Triple(Icons.Filled.TrendingFlat, Color.Gray, "About the same ${comparisonPeriod.label}")
+            }
+        }
+    }
+
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Today's spending", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SpendComparisonPeriod.entries.forEach { period ->
+                        FilterChip(
+                            selected = period == comparisonPeriod,
+                            onClick = { onComparisonPeriodChange(period) },
+                            label = { Text(period.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "), style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(formatInr(todaySpend), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(trendIcon, contentDescription = null, tint = trendColor, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(trendText, style = MaterialTheme.typography.bodySmall, color = trendColor)
             }
         }
     }
