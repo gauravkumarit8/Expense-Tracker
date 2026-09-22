@@ -31,7 +31,27 @@ class TransactionParser(context: Context) {
 
         // 1. Hard exclude: OTP / verification messages must never be treated
         //    as transactions, and their content must not be retained.
-        if (config.excludeKeywords.any { lower.contains(it.lowercase()) }) {
+        //
+        //    IMPORTANT: this must not fire on the standard "Never share your
+        //    OTP/PIN/CVV with anyone" disclaimer that real banks append to
+        //    completely legitimate transaction SMS — a blanket substring
+        //    check for "otp" anywhere in the message was doing exactly that,
+        //    silently dropping real transactions purely because of this
+        //    boilerplate trailer. Confirmed via a real Union Bank of India
+        //    credit message ending "...Avl Bal Rs:2527.63.Never Share
+        //    OTP/PIN/CVV-Union Bank of India" — this is very likely the
+        //    actual cause of "some messages track, some don't" reported for
+        //    this bank (and potentially any other bank using similar
+        //    disclaimer phrasing, not a Union-Bank-specific bug). See
+        //    REQUIREMENTS.md Decision Log 2026-09-20.
+        //
+        //    Fix: strip just that specific disclaimer clause before running
+        //    the exclude-keyword scan, rather than loosening the scan
+        //    itself — a genuine OTP-delivery message's substantive content
+        //    ("Your OTP for login is 445566") doesn't match this narrow
+        //    disclaimer pattern and remains correctly excluded either way.
+        val textForExcludeCheck = SECURITY_DISCLAIMER_REGEX.replace(lower, " ")
+        if (config.excludeKeywords.any { textForExcludeCheck.contains(it.lowercase()) }) {
             return null
         }
 
@@ -154,6 +174,21 @@ class TransactionParser(context: Context) {
         // Bank amount regexes, fixed alongside this.
         private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?:?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
         private const val PAID_YOU_REGEX = "(?i)^(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z ]{2,60}?)\\s+paid you\\s+(?:rs\\.?|inr|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
+
+        // Matches the standard "never/do not share your OTP/PIN/CVV..."
+        // disclaimer clause that most Indian banks append to transaction
+        // SMS. Deliberately narrow — requires "share" immediately followed
+        // by one of otp/pin/cvv/password/card, so it only strips genuine
+        // disclaimer boilerplate and can't accidentally eat substantive
+        // message content. See the parse() comment above for why this
+        // exists (a real Union Bank message was being silently dropped
+        // because of this exact clause).
+        private val SECURITY_DISCLAIMER_REGEX = Regex(
+            "(?:never|do\\s*not|don't)\\s+share\\s+(?:your\\s+)?" +
+                "(?:otp|pin|cvv|password|card\\s*(?:details|number)?)" +
+                "(?:\\s*(?:/|,|or)\\s*(?:otp|pin|cvv|password|card\\s*(?:details|number)?))*\\b",
+            RegexOption.IGNORE_CASE
+        )
 
         // Real bank/UPI alerts almost always reference one of these; a
         // recharge or order confirmation almost never does. Lowercase —
