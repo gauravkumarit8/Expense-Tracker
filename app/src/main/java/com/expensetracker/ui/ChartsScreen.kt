@@ -384,9 +384,6 @@ private fun BalanceHistoryDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
             } else {
-                // Defaults to the most recent point so the dialog always
-                // opens showing something meaningful, then updates to
-                // whichever point the user taps.
                 var selectedIndex by remember(history) { mutableStateOf(history.size - 1) }
                 Column {
                     val minY = history.minOf { it.second }
@@ -409,8 +406,17 @@ private fun BalanceHistoryDialog(
                             .padding(vertical = 4.dp)
                             .pointerInput(history) {
                                 detectTapGestures { offset ->
-                                    val stepX = if (history.size > 1) size.width / (history.size - 1) else 0f
-                                    val nearest = if (stepX > 0f) (offset.x / stepX).toInt().coerceIn(0, history.size - 1) else 0
+                                    // size here is IntSize -> size.width is Int.
+                                    // Convert to Float so both branches of the
+                                    // if-expression produce Float, otherwise
+                                    // Kotlin infers a captured Comparable type
+                                    // and `offset.x / stepX` fails to compile.
+                                    val stepX = if (history.size > 1) {
+                                        size.width.toFloat() / (history.size - 1)
+                                    } else 0f
+                                    val nearest = if (stepX > 0f) {
+                                        (offset.x / stepX).toInt().coerceIn(0, history.size - 1)
+                                    } else 0
                                     selectedIndex = nearest
                                 }
                             }
@@ -431,7 +437,6 @@ private fun BalanceHistoryDialog(
                         history.forEachIndexed { i, (_, y) ->
                             val p = pointOffset(i, y)
                             if (i == selectedIndex) {
-                                // Vertical guide line + a larger ring around the selected point
                                 drawLine(
                                     color = BrandGreen.copy(alpha = 0.3f),
                                     start = Offset(p.x, 0f),
