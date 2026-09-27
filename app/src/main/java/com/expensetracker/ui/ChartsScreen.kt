@@ -11,6 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -248,17 +250,24 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
             }
         } else {
             items(latestBalances, key = { it.source }) { entry ->
-                // The balanceAfter parsed off every transaction already forms a
-                // real historical timeline per source — never charted before
-                // now. Only meaningful for auto-detected sources (a purely
-                // manual entry has no transactions to derive history from);
-                // BalanceHistoryDialog handles an empty/single-point list
-                // gracefully rather than this needing to special-case it here.
-                val history = remember(allTransactions, entry.source) {
-                    allTransactions
+                // Two history sources merged chronologically: the
+                // balanceAfter parsed off every transaction (auto-detected
+                // accounts), and every manually-entered figure for this
+                // source (2026-09-21: manual entries used to have no
+                // history at all, since every edit overwrote the last one —
+                // ManualBalanceStore now keeps the full timeline instead).
+                // A source could plausibly have both if it started
+                // auto-detected and was later manually corrected once or
+                // twice, or vice versa — merging means the chart reflects
+                // everything actually known about the account, not just
+                // whichever source happened to produce it.
+                val history = remember(allTransactions, manualEntries, entry.source) {
+                    val fromTransactions = allTransactions
                         .filter { it.bankOrSource == entry.source && it.balanceAfter != null }
-                        .sortedBy { it.timestampMillis }
                         .map { it.timestampMillis to it.balanceAfter!! }
+                    val fromManual = ManualBalanceStore.getHistory(context, entry.source)
+                        .map { it.asOfMillis to it.amount }
+                    (fromTransactions + fromManual).sortedBy { it.first }
                 }
                 BalanceRow(
                     source = entry.source,
@@ -364,26 +373,48 @@ private fun BalanceHistoryDialog(
     onDismiss: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+    val pointDateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("$source balance history") },
         text = {
             if (history.size < 2) {
                 Text(
-                    "Not enough history yet to chart — this builds up automatically as more transactions are captured for this account. " +
-                        "Manually-added balances don't have a history, since each edit replaces the previous figure rather than tracking it over time.",
+                    "Not enough history yet to chart — this builds up as more transactions are captured, or each time you manually update this account's balance.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             } else {
+                // Defaults to the most recent point so the dialog always
+                // opens showing something meaningful, then updates to
+                // whichever point the user taps.
+                var selectedIndex by remember(history) { mutableStateOf(history.size - 1) }
                 Column {
                     val minY = history.minOf { it.second }
                     val maxY = history.maxOf { it.second }
+                    val (selectedTime, selectedValue) = history[selectedIndex]
                     Text(
-                        if (visible) "${formatInr(maxY)}" else "₹ • • • • • •",
+                        pointDateFormat.format(Date(selectedTime)),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.Gray
                     )
-                    Canvas(modifier = Modifier.fillMaxWidth().height(160.dp).padding(vertical = 4.dp)) {
+                    Text(
+                        if (visible) formatInr(selectedValue) else "₹ • • • • • •",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .padding(vertical = 4.dp)
+                            .pointerInput(history) {
+                                detectTapGestures { offset ->
+                                    val stepX = if (history.size > 1) size.width / (history.size - 1) else 0f
+                                    val nearest = if (stepX > 0f) (offset.x / stepX).toInt().coerceIn(0, history.size - 1) else 0
+                                    selectedIndex = nearest
+                                }
+                            }
+                    ) {
                         val yRange = (maxY - minY).takeIf { it > 0.0 } ?: 1.0
                         val stepX = if (history.size > 1) size.width / (history.size - 1) else 0f
                         fun pointOffset(index: Int, value: Double): Offset {
@@ -398,7 +429,20 @@ private fun BalanceHistoryDialog(
                         }
                         drawPath(path, color = BrandGreen, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
                         history.forEachIndexed { i, (_, y) ->
-                            drawCircle(color = BrandGreen, radius = 4.dp.toPx(), center = pointOffset(i, y))
+                            val p = pointOffset(i, y)
+                            if (i == selectedIndex) {
+                                // Vertical guide line + a larger ring around the selected point
+                                drawLine(
+                                    color = BrandGreen.copy(alpha = 0.3f),
+                                    start = Offset(p.x, 0f),
+                                    end = Offset(p.x, size.height),
+                                    strokeWidth = 1.dp.toPx()
+                                )
+                                drawCircle(color = Color.White, radius = 7.dp.toPx(), center = p)
+                                drawCircle(color = BrandGreen, radius = 7.dp.toPx(), center = p, style = Stroke(width = 2.5.dp.toPx()))
+                            } else {
+                                drawCircle(color = BrandGreen, radius = 4.dp.toPx(), center = p)
+                            }
                         }
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -412,7 +456,7 @@ private fun BalanceHistoryDialog(
                         color = Color.Gray
                     )
                     Text(
-                        "${history.size} balance points captured",
+                        "${history.size} balance points captured — tap the chart to see any point",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.Gray
                     )

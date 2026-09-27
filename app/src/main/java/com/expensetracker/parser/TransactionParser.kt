@@ -183,10 +183,18 @@ class TransactionParser(context: Context) {
         // message content. See the parse() comment above for why this
         // exists (a real Union Bank message was being silently dropped
         // because of this exact clause).
+        // 2026-09-21: broadened to also match "one time password" (not
+        // just "password") — same false-rejection bug, different
+        // spelled-out wording. A message like "...Never share your one
+        // time password with anyone -SBI" was falling through this
+        // regex because "one time" sat between "your" and "password",
+        // breaking the original adjacency assumption. Verified this
+        // exact variant would otherwise still silently drop a real
+        // transaction the same way the original Union Bank case did.
         private val SECURITY_DISCLAIMER_REGEX = Regex(
             "(?:never|do\\s*not|don't)\\s+share\\s+(?:your\\s+)?" +
-                "(?:otp|pin|cvv|password|card\\s*(?:details|number)?)" +
-                "(?:\\s*(?:/|,|or)\\s*(?:otp|pin|cvv|password|card\\s*(?:details|number)?))*\\b",
+                "(?:otp|pin|cvv|password|(?:one\\s*time\\s*password)|card\\s*(?:details|number)?)" +
+                "(?:\\s*(?:/|,|or)\\s*(?:otp|pin|cvv|password|(?:one\\s*time\\s*password)|card\\s*(?:details|number)?))*\\b",
             RegexOption.IGNORE_CASE
         )
 
