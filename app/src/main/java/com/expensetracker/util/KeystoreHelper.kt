@@ -28,9 +28,17 @@ object KeystoreHelper {
 
         val newKey = ByteArray(32) // 256-bit
         SecureRandom().nextBytes(newKey)
-        prefs.edit()
+        // commit(), not apply(): apply() flushes to disk asynchronously. If
+        // the process died in that window, the database would already be
+        // encrypted with a key that was never persisted, and every later
+        // launch would generate a different key and fail to open the file,
+        // permanently locking the user out of their own data. commit()
+        // blocks until the write is durable, and a failed write must abort
+        // before the caller creates a database with this key.
+        val saved = prefs.edit()
             .putString(KEY_DB_PASSPHRASE, Base64.encodeToString(newKey, Base64.NO_WRAP))
-            .apply()
+            .commit()
+        check(saved) { "Could not persist the database passphrase" }
         return newKey
     }
 

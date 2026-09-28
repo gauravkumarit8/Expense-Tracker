@@ -88,7 +88,10 @@ import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
+import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
@@ -268,8 +271,14 @@ class MainActivity : FragmentActivity() {
                                 reminders = reminderDao.getAllOnce(),
                                 budgets = budgetDao.getAllOnce()
                             )
-                            context.contentResolver.openOutputStream(uri)?.use { out ->
-                                out.write(BackupSerializer.toJson(payload).toByteArray())
+                            // File I/O + JSON encoding off the main thread (a
+                            // Drive-backed document URI can block for seconds).
+                            // A null stream used to fall through silently and
+                            // still report "Backup saved" — now it's an error.
+                            withContext(Dispatchers.IO) {
+                                val out = context.contentResolver.openOutputStream(uri)
+                                    ?: throw IllegalStateException("Could not open the destination file")
+                                out.use { it.write(BackupSerializer.toJson(payload).toByteArray()) }
                             }
                             snackbarHostState.showSnackbar("Backup saved (${payload.transactions.size} transactions)")
                         } catch (e: Exception) {
@@ -285,8 +294,10 @@ class MainActivity : FragmentActivity() {
                     scope.launch {
                         try {
                             val transactions = transactionDao.getAllOnce()
-                            context.contentResolver.openOutputStream(uri)?.use { out ->
-                                out.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray())
+                            withContext(Dispatchers.IO) {
+                                val out = context.contentResolver.openOutputStream(uri)
+                                    ?: throw IllegalStateException("Could not open the destination file")
+                                out.use { it.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray()) }
                             }
                             snackbarHostState.showSnackbar("CSV saved (${transactions.size} transactions)")
                         } catch (e: Exception) {
@@ -301,17 +312,33 @@ class MainActivity : FragmentActivity() {
                     if (uri == null) return@rememberLauncherForActivityResult
                     scope.launch {
                         try {
-                            val text = context.contentResolver.openInputStream(uri)?.use { input ->
-                                BufferedReader(InputStreamReader(input)).readText()
-                            } ?: throw IllegalStateException("Could not read file")
-                            val payload = BackupSerializer.fromJson(text)
+                            // Read + parse off the main thread, and fully validate
+                            // BEFORE touching any existing data.
+                            val payload = withContext(Dispatchers.IO) {
+                                val text = context.contentResolver.openInputStream(uri)?.use { input ->
+                                    BufferedReader(InputStreamReader(input)).readText()
+                                } ?: throw IllegalStateException("Could not read file")
+                                BackupSerializer.fromJson(text)
+                            }
+                            // Current backup format is 1; refuse anything newer.
+                            if (payload.formatVersion > 1) {
+                                throw IllegalStateException("This backup was made by a newer version of the app")
+                            }
 
-                            transactionDao.deleteAll()
-                            reminderDao.deleteAll()
-                            budgetDao.deleteAll()
-                            payload.transactions.forEach { transactionDao.insert(it) }
-                            payload.reminders.forEach { reminderDao.insert(it) }
-                            payload.budgets.forEach { budgetDao.upsert(it) }
+                            // One atomic transaction: previously this deleted all
+                            // three tables and then inserted row by row with no
+                            // transaction, so a failure or process kill midway
+                            // left the user with an empty or half-restored
+                            // database and their old data already gone. Now it
+                            // either fully applies or rolls back untouched.
+                            db.withTransaction {
+                                transactionDao.deleteAll()
+                                reminderDao.deleteAll()
+                                budgetDao.deleteAll()
+                                payload.transactions.forEach { transactionDao.insert(it) }
+                                payload.reminders.forEach { reminderDao.insert(it) }
+                                payload.budgets.forEach { budgetDao.upsert(it) }
+                            }
 
                             snackbarHostState.showSnackbar("Restored ${payload.transactions.size} transactions")
                         } catch (e: Exception) {

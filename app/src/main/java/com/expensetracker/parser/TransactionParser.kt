@@ -21,10 +21,13 @@ import java.util.concurrent.TimeoutException
 class TransactionParser(context: Context) {
 
     private val config = BankPatternsLoader.load(context)
-    // Single-thread executor used only to enforce a hard timeout per regex
-    // evaluation, guarding against catastrophic backtracking (ReDoS) if a
-    // pattern is ever misconfigured. See REQUIREMENTS.md Security ยง6.
-    private val regexExecutor = Executors.newSingleThreadExecutor()
+    // Whole-word matchers for excludeKeywords. These used to be plain
+    // substring checks, so "OTP" matched inside merchant names like DotPe
+    // or Hotpot and "ipo" matched inside Tripod, silently dropping real
+    // transactions. Compiled once per parser instance.
+    private val excludePatterns: List<Regex> = config.excludeKeywords.map {
+        Regex("\\b" + Regex.escape(it.lowercase()) + "\\b")
+    }
 
     fun parse(sender: String, text: String, timestampMillis: Long): Transaction? {
         val lower = text.lowercase()
@@ -51,7 +54,7 @@ class TransactionParser(context: Context) {
         //    ("Your OTP for login is 445566") doesn't match this narrow
         //    disclaimer pattern and remains correctly excluded either way.
         val textForExcludeCheck = SECURITY_DISCLAIMER_REGEX.replace(lower, " ")
-        if (config.excludeKeywords.any { textForExcludeCheck.contains(it.lowercase()) }) {
+        if (excludePatterns.any { it.containsMatchIn(textForExcludeCheck) }) {
             return null
         }
 
@@ -110,11 +113,7 @@ class TransactionParser(context: Context) {
         // matched the debit pattern's "to X" clause (since "to" is a common
         // preposition, not exclusive to debit messages) and got
         // misclassified as SENT. See REQUIREMENTS.md Decision Log 2026-08-16.
-        val direction = when {
-            Regex("\\b(credited|received)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.RECEIVED
-            Regex("\\b(debited|sent|spent|withdrawn|paid|payment)\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> Direction.SENT
-            else -> Direction.UNKNOWN
-        }
+        val direction = detectDirection(text)
 
         // 3. Try sender-specific patterns first, then a generic UPI fallback
         val genericEntry = config.patterns.first { it.senderMatch == "GENERIC_UPI" }
@@ -191,12 +190,54 @@ class TransactionParser(context: Context) {
         // breaking the original adjacency assumption. Verified this
         // exact variant would otherwise still silently drop a real
         // transaction the same way the original Union Bank case did.
+        // 2026-09-28: also accepts "disclose"/"reveal", an optional
+        // "this"/"the" before the item, and "and"/"&" as list separators
+        // (e.g. "Never disclose your OTP/PIN", "Do not share this OTP",
+        // "Never share your card details, PIN and OTP").
+        private const val DISCLAIMER_ITEM =
+            "(?:otp|pin|cvv|password|(?:one\\s*time\\s*password)|card\\s*(?:details|number)?)"
         private val SECURITY_DISCLAIMER_REGEX = Regex(
-            "(?:never|do\\s*not|don't)\\s+share\\s+(?:your\\s+)?" +
-                "(?:otp|pin|cvv|password|(?:one\\s*time\\s*password)|card\\s*(?:details|number)?)" +
-                "(?:\\s*(?:/|,|or)\\s*(?:otp|pin|cvv|password|(?:one\\s*time\\s*password)|card\\s*(?:details|number)?))*\\b",
+            "(?:never|do\\s*not|don't)\\s+(?:share|disclose|reveal)\\s+(?:your\\s+|this\\s+|the\\s+)?" +
+                DISCLAIMER_ITEM +
+                "(?:\\s*(?:/|,|&|or|and)\\s*" + DISCLAIMER_ITEM + ")*\\b",
             RegexOption.IGNORE_CASE
         )
+
+        private val STRONG_CREDIT_REGEX = Regex("\\b(credited|received)\\b", RegexOption.IGNORE_CASE)
+        private val STRONG_DEBIT_REGEX = Regex("\\b(debited|sent|spent|withdrawn)\\b", RegexOption.IGNORE_CASE)
+        private val WEAK_DEBIT_REGEX = Regex("\\b(paid|payment)\\b", RegexOption.IGNORE_CASE)
+
+        /**
+         * Direction from the FIRST strong keyword in the message.
+         *
+         * This used to be "credited/received anywhere => RECEIVED", which
+         * misclassified debit alerts that mention a credit later on, e.g.
+         * "Rs 500 debited from A/c ...; RAJESH credited", IMPS alerts
+         * naming the beneficiary account as "credited", or a debit
+         * followed by "cashback will be credited". The keyword that
+         * appears first states what happened to the user's own account.
+         * "paid"/"payment" are weak signals (they also appear in credit
+         * messages such as "Payment of Rs X received"), so they only
+         * decide when no strong keyword is present.
+         */
+        internal fun detectDirection(text: String): Direction {
+            val credit = STRONG_CREDIT_REGEX.find(text)?.range?.first
+            val debit = STRONG_DEBIT_REGEX.find(text)?.range?.first
+            return when {
+                credit != null && debit != null -> if (debit < credit) Direction.SENT else Direction.RECEIVED
+                credit != null -> Direction.RECEIVED
+                debit != null -> Direction.SENT
+                WEAK_DEBIT_REGEX.containsMatchIn(text) -> Direction.SENT
+                else -> Direction.UNKNOWN
+            }
+        }
+
+        // Shared across all parser instances. A new single-thread executor
+        // was previously created per TransactionParser and never shut down,
+        // leaking a thread each time. Daemon threads in a cached pool, so a
+        // regex that outlives its timeout can't block later parses.
+        private val regexExecutor: java.util.concurrent.ExecutorService =
+            Executors.newCachedThreadPool { r -> Thread(r, "regex-timeout").apply { isDaemon = true } }
 
         // Real bank/UPI alerts almost always reference one of these; a
         // recharge or order confirmation almost never does. Lowercase —

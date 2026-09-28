@@ -1,22 +1,17 @@
 package com.autoexpensetracker.worker
 
 import android.content.Context
-import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.autoexpensetracker.BuildConfig
-import com.autoexpensetracker.data.AppDatabase
-import com.autoexpensetracker.data.InsertOutcome
-import com.autoexpensetracker.parser.TransactionParser
-import com.autoexpensetracker.review.ReviewPromptStore
-import com.autoexpensetracker.util.UnusualSpendDetector
-import com.autoexpensetracker.widget.WidgetRefresher
 
 /**
- * Runs off the main/callback thread. Parses the raw text, discards it, and
- * persists only the structured Transaction to the encrypted Room DB.
- * See REQUIREMENTS.md Security ยง2 (Data Minimization) — `text` never
- * outlives this function call.
+ * LEGACY. The notification listener no longer enqueues this worker (see
+ * [TransactionIngestor] for why: WorkManager stored the raw message text
+ * in its unencrypted database). The class is deliberately kept so that any
+ * job persisted by an older app version, still waiting in WorkManager's
+ * queue at the moment of an update, can still be instantiated and run
+ * instead of failing with ClassNotFoundException. It can be deleted once
+ * no installed version older than this one remains in the field.
  */
 class ParseAndStoreWorker(
     context: Context,
@@ -27,44 +22,13 @@ class ParseAndStoreWorker(
         const val KEY_SENDER = "sender"
         const val KEY_TEXT = "text"
         const val KEY_TIMESTAMP = "timestamp"
-        private const val TAG = "ParseAndStoreWorker"
     }
 
     override suspend fun doWork(): Result {
         val sender = inputData.getString(KEY_SENDER) ?: return Result.failure()
         val text = inputData.getString(KEY_TEXT) ?: return Result.failure()
         val timestamp = inputData.getLong(KEY_TIMESTAMP, System.currentTimeMillis())
-
-        val parser = TransactionParser(applicationContext)
-        val transaction = parser.parse(sender, text, timestamp) ?: return Result.success() // not a transaction, discard silently
-
-        val dao = AppDatabase.getInstance(applicationContext).transactionDao()
-
-        // Exact-hash dedup and cross-source duplicate detection now happen
-        // atomically inside a single Room `@Transaction` (see
-        // TransactionDao.insertIfNotDuplicate). Previously this was two
-        // separate suspend calls (a check, then an insert), which raced when
-        // two notifications for the same real payment — e.g. a bank SMS
-        // alert and a UPI app's own notification — arrived close together:
-        // both could pass the check before either had committed. See
-        // REQUIREMENTS.md ยง2.15 amendment (2026-09-02).
-        when (val outcome = dao.insertIfNotDuplicate(transaction)) {
-            is InsertOutcome.Inserted -> {
-                if (outcome.id > 0) {
-                    UnusualSpendDetector.checkAndNotify(applicationContext, dao, transaction.copy(id = outcome.id))
-                    ReviewPromptStore.recordCapturedTransaction(applicationContext)
-                    WidgetRefresher.refresh(applicationContext)
-                }
-            }
-            is InsertOutcome.ExactDuplicateSkipped -> {
-                if (BuildConfig.DEBUG) Log.d(TAG, "Skipped exact-hash duplicate from $sender")
-            }
-            is InsertOutcome.CrossSourceDuplicateSkipped -> {
-                if (BuildConfig.DEBUG) Log.d(TAG, "Skipped cross-source duplicate of transaction #${outcome.existingId} from $sender")
-            }
-        }
-        // `text` and `sender` local vars go out of scope here and are not
-        // referenced anywhere else — nothing raw is written to logs or disk.
+        TransactionIngestor.ingest(applicationContext, sender, text, timestamp)
         return Result.success()
     }
 }
