@@ -162,6 +162,26 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
                 if (spent > limit) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Over budget by ${formatInr(spent - limit)}", style = MaterialTheme.typography.bodySmall, color = SemanticRed)
+                } else {
+                    // "Warn before crossing": project the full-month spend from
+                    // the current daily run rate (spent so far / days elapsed
+                    // so far this month * days in month). Needs >=3 elapsed
+                    // days so one or two early big-ticket purchases (rent,
+                    // an annual payment) don't produce a wildly overstated
+                    // projection on the 1st or 2nd of the month.
+                    val cal = Calendar.getInstance()
+                    val daysElapsed = cal.get(Calendar.DAY_OF_MONTH)
+                    val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    if (daysElapsed >= 3 && spent > 0) {
+                        val projected = spent / daysElapsed * daysInMonth
+                        if (projected > limit) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "On track to cross by ${formatInr(projected - limit)} this month",
+                                style = MaterialTheme.typography.bodySmall, color = Color(0xFFF57C00)
+                            )
+                        }
+                    }
                 }
             }
         }

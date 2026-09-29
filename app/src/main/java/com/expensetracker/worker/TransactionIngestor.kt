@@ -8,6 +8,10 @@ import com.autoexpensetracker.data.InsertOutcome
 import com.autoexpensetracker.parser.TransactionParser
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.util.UnusualSpendDetector
+import com.autoexpensetracker.util.BudgetWarningDetector
+import com.autoexpensetracker.util.SubscriptionPriceChangeDetector
+import com.autoexpensetracker.util.PriceChangeStore
+import com.autoexpensetracker.util.PriceChangeNotificationHelper
 import com.autoexpensetracker.widget.WidgetRefresher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -73,7 +77,21 @@ object TransactionIngestor {
         when (val outcome = dao.insertIfNotDuplicate(transaction)) {
             is InsertOutcome.Inserted -> {
                 if (outcome.id > 0) {
-                    UnusualSpendDetector.checkAndNotify(appContext, dao, transaction.copy(id = outcome.id))
+                    val inserted = transaction.copy(id = outcome.id)
+                    UnusualSpendDetector.checkAndNotify(appContext, dao, inserted)
+                    BudgetWarningDetector.checkAndNotify(appContext, dao, AppDatabase.getInstance(appContext).budgetDao(), inserted)
+                    // Only act on an alert that's actually ABOUT this new
+                    // transaction (detect() re-scans everything every time,
+                    // so most calls return alerts for merchants unrelated
+                    // to what was just inserted).
+                    SubscriptionPriceChangeDetector.detect(dao.getAllOnce())
+                        .firstOrNull { it.newTransactionId == inserted.id }
+                        ?.let { alert ->
+                            if (!PriceChangeStore.isHandled(appContext, alert.merchant, alert.newAmount)) {
+                                PriceChangeStore.markHandled(appContext, alert.merchant, alert.newAmount)
+                                PriceChangeNotificationHelper.show(appContext, alert)
+                            }
+                        }
                     ReviewPromptStore.recordCapturedTransaction(appContext)
                     WidgetRefresher.refresh(appContext)
                 }

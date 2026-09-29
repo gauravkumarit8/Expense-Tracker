@@ -254,6 +254,8 @@ class MainActivity : FragmentActivity() {
                 var showManualEntry by remember { mutableStateOf(false) }
                 var showAddReminder by remember { mutableStateOf(false) }
                 var showBackupDialog by remember { mutableStateOf(false) }
+                var showImportStatementDialog by remember { mutableStateOf(false) }
+                var pendingStatementAccountLabel by remember { mutableStateOf("") }
                 var showSettings by remember { mutableStateOf(false) }
                 // Full-screen overlay reached from "See all months" on the
                 // Transactions tab — mirrors the existing showSettings pattern
@@ -362,6 +364,35 @@ class MainActivity : FragmentActivity() {
                             snackbarHostState.showSnackbar("Restored ${payload.transactions.size} transactions")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Restore failed: ${e.message}")
+                        }
+                    }
+                }
+
+                val importStatementLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    val accountLabel = pendingStatementAccountLabel
+                    scope.launch {
+                        try {
+                            val csvText = withContext(Dispatchers.IO) {
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    BufferedReader(InputStreamReader(input)).readText()
+                                } ?: throw IllegalStateException("Could not read file")
+                            }
+                            val result = withContext(Dispatchers.IO) {
+                                com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
+                            }
+                            val message = buildString {
+                                append("Imported ${result.imported} transactions")
+                                if (result.skippedAsDuplicate > 0) append(", ${result.skippedAsDuplicate} already had a matching transaction")
+                                if (result.skippedUnparseable > 0) append(", ${result.skippedUnparseable} rows couldn't be read")
+                            }
+                            snackbarHostState.showSnackbar(message)
+                        } catch (e: com.autoexpensetracker.importer.StatementCsvParser.ParseException) {
+                            snackbarHostState.showSnackbar("Couldn't read this file: ${e.message}")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("Import failed: ${e.message}")
                         }
                     }
                 }
@@ -512,6 +543,12 @@ class MainActivity : FragmentActivity() {
                                         csvExportLauncher.launch(filename)
                                     }
                                 },
+                                onImportStatementClick = {
+                                    requirePro {
+                                        pendingStatementAccountLabel = ""
+                                        showImportStatementDialog = true
+                                    }
+                                },
                                 isPro = isPro,
                                 onUpgradeClick = { if (isPro) showManageSubscriptionDialog = true else showUpgradeDialog = true },
                                 appLockEnabled = appLockEnabled,
@@ -560,6 +597,8 @@ class MainActivity : FragmentActivity() {
                                         // all data".
                                         ManualBalanceStore.clearAll(context)
                                         com.autoexpensetracker.util.DismissedSuggestionsStore.clearAll(context)
+                                        com.autoexpensetracker.util.BudgetWarningStore.clearAll(context)
+                                        com.autoexpensetracker.util.PriceChangeStore.clearAll(context)
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
                                 },
@@ -662,6 +701,17 @@ class MainActivity : FragmentActivity() {
                             onImport = {
                                 importLauncher.launch(arrayOf("application/json"))
                                 showBackupDialog = false
+                            }
+                        )
+                    }
+                    if (showImportStatementDialog) {
+                        ImportStatementDialog(
+                            accountLabel = pendingStatementAccountLabel,
+                            onAccountLabelChange = { pendingStatementAccountLabel = it },
+                            onDismiss = { showImportStatementDialog = false },
+                            onChooseFile = {
+                                showImportStatementDialog = false
+                                importStatementLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain"))
                             }
                         )
                     }
