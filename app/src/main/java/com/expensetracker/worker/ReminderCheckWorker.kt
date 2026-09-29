@@ -32,7 +32,13 @@ class ReminderCheckWorker(
             val daysInMonth = today.getActualMaximum(Calendar.DAY_OF_MONTH)
             val effectiveDueDay = minOf(reminder.dueDayOfMonth, daysInMonth)
 
-            if (!alreadyNotifiedThisMonth && todayDay == effectiveDueDay) {
+            // >= rather than ==: this is periodic WorkManager work, which
+            // Doze/OEM battery managers can delay by a day or more. If the
+            // worker doesn't happen to run on the exact due day, an ==
+            // check would never match again until next month and the
+            // reminder would silently be skipped for the whole month.
+            // alreadyNotifiedThisMonth still guards against firing twice.
+            if (!alreadyNotifiedThisMonth && todayDay >= effectiveDueDay) {
                 ReminderNotificationHelper.show(applicationContext, reminder.id, reminder.title, reminder.amount)
                 dao.update(reminder.copy(lastNotifiedYearMonth = yearMonth))
             }

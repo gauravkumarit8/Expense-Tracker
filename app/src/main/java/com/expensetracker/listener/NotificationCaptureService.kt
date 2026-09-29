@@ -137,7 +137,15 @@ class NotificationCaptureService : NotificationListenerService() {
             ?.filter { it.isNotBlank() }
             .orEmpty()
 
-        val isKnownFinancePackage = knownFinancePackagePrefixes.any { pkg.startsWith(it) }
+        // Exact match, not startsWith: package names are unique per device
+        // (Android's package manager won't let a second app install under
+        // an existing one's exact name unless it's signed with the same
+        // key, which is how legitimate app updates work). startsWith
+        // matched any package name that merely began with a listed one,
+        // e.g. a lookalike app named "com.phonepe.apphelper" would have
+        // been trusted as PhonePe itself and had its notifications parsed
+        // as real transactions.
+        val isKnownFinancePackage = knownFinancePackagePrefixes.any { pkg == it }
         val isDefaultSmsApp = cachedDefaultSmsPackage != null && pkg == cachedDefaultSmsPackage
         val looksLikeBankSender = senderIdShape.matches(title.trim())
 
