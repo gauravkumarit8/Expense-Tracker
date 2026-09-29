@@ -42,7 +42,7 @@ object SubscriptionPriceChangeDetector {
     fun detect(transactions: List<Transaction>): List<PriceChangeAlert> {
         return transactions
             .filter { it.direction == Direction.SENT && !it.needsReview && !it.merchantOrContact.isNullOrBlank() }
-            .groupBy { it.merchantOrContact!!.trim().lowercase() }
+            .groupBy { MerchantMatcher.canonicalKey(it.merchantOrContact!!) }
             .mapNotNull { (_, txsUnsorted) ->
                 val txs = txsUnsorted.sortedBy { it.timestampMillis }
                 if (txs.size < MIN_BASELINE_OCCURRENCES + 1) return@mapNotNull null
