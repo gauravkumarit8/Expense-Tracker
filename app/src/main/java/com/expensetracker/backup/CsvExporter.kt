@@ -28,11 +28,11 @@ object CsvExporter {
                 timeFormat.format(date),
                 tx.direction.name,
                 "%.2f".format(tx.amount),
-                tx.merchantOrContact.orEmpty(),
-                tx.bankOrSource,
-                tx.category.orEmpty(),
-                tx.note.orEmpty(),
-                tx.tags.orEmpty(),
+                neutralizeFormula(tx.merchantOrContact.orEmpty()),
+                neutralizeFormula(tx.bankOrSource),
+                neutralizeFormula(tx.category.orEmpty()),
+                neutralizeFormula(tx.note.orEmpty()),
+                neutralizeFormula(tx.tags.orEmpty()),
                 tx.balanceAfter?.let { "%.2f".format(it) } ?: "",
                 if (tx.needsReview) "Yes" else "No"
             ).joinToString(",") { escapeCsvField(it) }
@@ -40,6 +40,17 @@ object CsvExporter {
 
         return (listOf(header) + rows).joinToString("\n")
     }
+
+    /**
+     * CSV/formula injection guard. Text fields here come from notification
+     * titles/bodies and free-text notes; a value starting with = + - @ (or
+     * a tab/CR) is executed as a formula when the file is opened in Excel
+     * or Sheets. Prefixing a single quote makes spreadsheets treat it as
+     * plain text. Applied ONLY to free-text columns - never to Amount or
+     * Balance After, where a leading "-" is a legitimate negative number.
+     */
+    private fun neutralizeFormula(field: String): String =
+        if (field.isNotEmpty() && field[0] in "=+-@\t\r") "'" + field else field
 
     /** Wraps a field in quotes and escapes internal quotes if it contains a comma, quote, or newline. */
     private fun escapeCsvField(field: String): String {

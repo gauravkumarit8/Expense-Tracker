@@ -23,4 +23,16 @@ object AppLockManager {
         val result = manager.canAuthenticate(BIOMETRIC_WEAK or DEVICE_CREDENTIAL)
         return result == BiometricManager.BIOMETRIC_SUCCESS
     }
+
+
+    /**
+     * True ONLY when the device definitively has no screen lock and no
+     * enrolled biometric (BIOMETRIC_ERROR_NONE_ENROLLED). Deliberately
+     * narrower than `!canUseAppLock()`: that is also false for unrelated or
+     * transient statuses, and treating those as "no credential" would let a
+     * flaky API result silently switch the user's App Lock off.
+     */
+    fun deviceHasNoCredential(context: Context): Boolean =
+        BiometricManager.from(context).canAuthenticate(BIOMETRIC_WEAK or DEVICE_CREDENTIAL) ==
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED
 }

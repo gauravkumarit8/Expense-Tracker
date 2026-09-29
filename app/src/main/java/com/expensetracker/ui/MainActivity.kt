@@ -181,6 +181,18 @@ class MainActivity : FragmentActivity() {
                     onStopOrDispose { if (appLockEnabled) isUnlocked = false }
                 }
 
+                // While App Lock is on, hide the UI from screenshots, screen
+                // recording and the Recents thumbnail (which otherwise shows
+                // balances and transactions of a "locked" app). Trade-off:
+                // the user can't screenshot the app while the lock is on.
+                LaunchedEffect(appLockEnabled) {
+                    if (appLockEnabled) {
+                        this@MainActivity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        this@MainActivity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+
                 var notificationAccessGranted by remember { mutableStateOf(NotificationAccessHelper.isEnabled(context)) }
                 LifecycleStartEffect(Unit) {
                     notificationAccessGranted = NotificationAccessHelper.isEnabled(context)
@@ -269,7 +281,9 @@ class MainActivity : FragmentActivity() {
                                 exportedAtMillis = System.currentTimeMillis(),
                                 transactions = transactionDao.getAllOnce(),
                                 reminders = reminderDao.getAllOnce(),
-                                budgets = budgetDao.getAllOnce()
+                                budgets = budgetDao.getAllOnce(),
+                                manualBalances = ManualBalanceStore.exportAll(context),
+                                hiddenBalanceSources = ManualBalanceStore.getHidden(context).toList()
                             )
                             // File I/O + JSON encoding off the main thread (a
                             // Drive-backed document URI can block for seconds).
@@ -338,6 +352,11 @@ class MainActivity : FragmentActivity() {
                                 payload.transactions.forEach { transactionDao.insert(it) }
                                 payload.reminders.forEach { reminderDao.insert(it) }
                                 payload.budgets.forEach { budgetDao.upsert(it) }
+                            }
+                            // Only when the backup actually carries them (older
+                            // backups don't - leave current manual balances alone).
+                            payload.manualBalances?.let {
+                                ManualBalanceStore.replaceAll(context, it, payload.hiddenBalanceSources.orEmpty().toSet())
                             }
 
                             snackbarHostState.showSnackbar("Restored ${payload.transactions.size} transactions")
@@ -458,6 +477,18 @@ class MainActivity : FragmentActivity() {
                         if (isLocked) {
                             LockScreen(
                                 onUnlockClick = {
+                                    if (AppLockManager.deviceHasNoCredential(context)) {
+                                        // The device screen lock / biometrics were
+                                        // removed after App Lock was enabled, so
+                                        // there is nothing to authenticate with and
+                                        // the user would be locked out permanently.
+                                        // With no device credential the phone is
+                                        // open to anyone anyway, so turn the lock off.
+                                        AppLockManager.setEnabled(context, false)
+                                        appLockEnabled = false
+                                        isUnlocked = true
+                                        return@LockScreen
+                                    }
                                     BiometricAuthHelper.authenticate(
                                         activity = this@MainActivity,
                                         onSuccess = { isUnlocked = true },
@@ -496,16 +527,39 @@ class MainActivity : FragmentActivity() {
                                                 appLockEnabled = true
                                             }
                                         )
-                                    } else {
+                                    } else if (AppLockManager.deviceHasNoCredential(context)) {
+                                        // Nothing to authenticate with (see LockScreen
+                                        // handler above) - allow turning it off.
                                         AppLockManager.setEnabled(context, false)
                                         appLockEnabled = false
+                                    } else {
+                                        // Turning the lock OFF now needs the same
+                                        // verification as turning it on; before, anyone
+                                        // holding the unlocked phone could disable it.
+                                        BiometricAuthHelper.authenticate(
+                                            activity = this@MainActivity,
+                                            title = "Confirm to turn off App Lock",
+                                            subtitle = "Verify it's you before turning this off",
+                                            onSuccess = {
+                                                AppLockManager.setEnabled(context, false)
+                                                appLockEnabled = false
+                                            }
+                                        )
                                     }
                                 },
                                 onDeleteAllData = {
                                     scope.launch {
-                                        transactionDao.deleteAll()
-                                        reminderDao.deleteAll()
-                                        budgetDao.deleteAll()
+                                        db.withTransaction {
+                                            transactionDao.deleteAll()
+                                            reminderDao.deleteAll()
+                                            budgetDao.deleteAll()
+                                        }
+                                        // These live in SharedPreferences, outside the
+                                        // encrypted DB, and hold bank names, balances and
+                                        // merchant names - they used to survive "Delete
+                                        // all data".
+                                        ManualBalanceStore.clearAll(context)
+                                        com.autoexpensetracker.util.DismissedSuggestionsStore.clearAll(context)
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
                                 },
@@ -650,6 +704,10 @@ class MainActivity : FragmentActivity() {
         // Completes a FLEXIBLE update that finished downloading while the
         // app was backgrounded — a no-op if nothing is pending.
         if (::appUpdateHelper.isInitialized) appUpdateHelper.completeUpdateIfDownloaded()
+        // Pick up subscription changes made outside the app (cancelled /
+        // renewed / bought on another device) and reconnect to Play if the
+        // billing service dropped.
+        if (::billingManager.isInitialized) billingManager.refreshEntitlement()
     }
 
     override fun onDestroy() {

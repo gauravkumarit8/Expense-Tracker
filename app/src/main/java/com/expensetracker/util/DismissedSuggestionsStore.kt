@@ -23,4 +23,9 @@ object DismissedSuggestionsStore {
         current.add(merchantKey)
         prefs.edit().putStringSet(KEY_SET, current).apply()
     }
+
+    /** Forgets every dismissed suggestion (used by "Delete all data"). */
+    fun clearAll(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
+    }
 }

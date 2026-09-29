@@ -115,5 +115,25 @@ object ManualBalanceStore {
         }
     }
 
+    /** Every entry ever recorded, unsorted - used by backup. */
+    fun exportAll(context: Context): List<Entry> = getAllRaw(context)
+
+    /**
+     * Replaces ALL manual balance data (entries + hidden set) - used by
+     * restore. commit() so the write is durable before the caller reports
+     * success.
+     */
+    fun replaceAll(context: Context, entries: List<Entry>, hidden: Set<String>) {
+        prefs(context).edit()
+            .putString(KEY_ENTRIES, json.encodeToString(entryListSerializer, entries))
+            .putStringSet(KEY_HIDDEN, hidden.toSet())
+            .commit()
+    }
+
+    /** Wipes everything this store holds (used by "Delete all data"). */
+    fun clearAll(context: Context) {
+        prefs(context).edit().clear().commit()
+    }
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }
