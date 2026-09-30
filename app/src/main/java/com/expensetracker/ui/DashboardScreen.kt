@@ -377,10 +377,18 @@ private fun SincePaydayCard(info: SinceLastSalary) {
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))
+            // MaterialTheme.colorScheme.primary is a @Composable property —
+            // it must be read here, in composable scope, NOT inside the
+            // Canvas draw lambda below (that lambda runs as DrawScope, not
+            // a @Composable context; calling it there fails to compile:
+            // "@Composable invocations can only happen from the context of
+            // a @Composable function" — this is exactly what broke the CI
+            // build; see the decision log).
+            val progressColor = MaterialTheme.colorScheme.primary
             Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
                 drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
                 drawRoundRect(
-                    color = if (spentFraction >= 1f) SemanticRed else MaterialTheme.colorScheme.primary,
+                    color = if (spentFraction >= 1f) SemanticRed else progressColor,
                     size = size.copy(width = size.width * spentFraction),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f)
                 )
