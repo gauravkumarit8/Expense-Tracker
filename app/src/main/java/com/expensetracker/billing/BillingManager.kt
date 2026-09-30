@@ -94,9 +94,30 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
         billingClient.queryPurchasesAsync(params) { result, purchases ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) return@queryPurchasesAsync
 
+            // Signature-checked against this app's Play Console licensing
+            // key (see PurchaseSignatureVerifier's doc comment for what
+            // this does and does not protect against) — previously any
+            // purchase the Billing library reported as PURCHASED was
+            // trusted outright, with nothing tying that local answer back
+            // to Google cryptographically.
             val activeSub = purchases.firstOrNull {
                 it.purchaseState == Purchase.PurchaseState.PURCHASED &&
-                    (it.products.contains(PRODUCT_ID_MONTHLY) || it.products.contains(PRODUCT_ID_YEARLY))
+                    (it.products.contains(PRODUCT_ID_MONTHLY) || it.products.contains(PRODUCT_ID_YEARLY)) &&
+                    PurchaseSignatureVerifier.isValid(it)
+            }
+
+            // Distinguished from "no purchase at all" purely for
+            // diagnostics: this specific combination (Play says PURCHASED,
+            // but the signature doesn't verify) is the one worth knowing
+            // about if it ever happens on a real device, since it's either
+            // a tampered purchase or a bug in this verification code.
+            val unverifiedPurchase = purchases.firstOrNull {
+                it.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                    (it.products.contains(PRODUCT_ID_MONTHLY) || it.products.contains(PRODUCT_ID_YEARLY)) &&
+                    !PurchaseSignatureVerifier.isValid(it)
+            }
+            if (unverifiedPurchase != null) {
+                Log.w(TAG, "A PURCHASED subscription failed signature verification and was NOT granted Pro access")
             }
 
             _isPro.value = activeSub != null
