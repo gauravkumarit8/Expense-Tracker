@@ -4,11 +4,8 @@ import android.content.ComponentName
 import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.autoexpensetracker.BuildConfig
-import com.autoexpensetracker.worker.ParseAndStoreWorker
+import com.autoexpensetracker.worker.TransactionIngestor
 
 /**
  * Primary transaction-capture path (see REQUIREMENTS.md Architecture ยง1).
@@ -140,7 +137,15 @@ class NotificationCaptureService : NotificationListenerService() {
             ?.filter { it.isNotBlank() }
             .orEmpty()
 
-        val isKnownFinancePackage = knownFinancePackagePrefixes.any { pkg.startsWith(it) }
+        // Exact match, not startsWith: package names are unique per device
+        // (Android's package manager won't let a second app install under
+        // an existing one's exact name unless it's signed with the same
+        // key, which is how legitimate app updates work). startsWith
+        // matched any package name that merely began with a listed one,
+        // e.g. a lookalike app named "com.phonepe.apphelper" would have
+        // been trusted as PhonePe itself and had its notifications parsed
+        // as real transactions.
+        val isKnownFinancePackage = knownFinancePackagePrefixes.any { pkg == it }
         val isDefaultSmsApp = cachedDefaultSmsPackage != null && pkg == cachedDefaultSmsPackage
         val looksLikeBankSender = senderIdShape.matches(title.trim())
 
@@ -170,19 +175,14 @@ class NotificationCaptureService : NotificationListenerService() {
                 )
             }
 
-            // Hand off immediately to a WorkManager job. We do NOT parse inline
-            // here — keeps this callback (which the OS expects to return fast)
-            // lightweight, and WorkManager handles retry/battery constraints.
-            val request = OneTimeWorkRequestBuilder<ParseAndStoreWorker>()
-                .setInputData(
-                    workDataOf(
-                        ParseAndStoreWorker.KEY_SENDER to senderForMatching,
-                        ParseAndStoreWorker.KEY_TEXT to combined,
-                        ParseAndStoreWorker.KEY_TIMESTAMP to sbn.postTime
-                    )
-                )
-                .build()
-            WorkManager.getInstance(applicationContext).enqueue(request)
+            // Parsed on a background thread and written straight to the
+            // encrypted DB. Deliberately NOT handed to WorkManager: it
+            // persists its input Data in a plain unencrypted SQLite
+            // database, which would put the raw message text (account
+            // digits, balances, names) on disk unencrypted. The callback
+            // itself returns immediately; nothing here blocks the main
+            // thread.
+            TransactionIngestor.enqueue(applicationContext, senderForMatching, combined, sbn.postTime)
         }
     }
 }

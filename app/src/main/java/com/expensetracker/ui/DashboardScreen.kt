@@ -46,10 +46,13 @@ import com.autoexpensetracker.data.Transaction
 import com.autoexpensetracker.ui.theme.SemanticGray
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.util.MonthRange
+import com.autoexpensetracker.util.SalaryDetector
+import com.autoexpensetracker.util.SinceLastSalary
 import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -135,6 +138,10 @@ internal fun DashboardScreen(
         spendOnDay(startOfDay(comparisonCal))
     }
 
+    val sinceLastSalary = remember(allTransactions) {
+        SalaryDetector.detect(allTransactions)
+    }
+
     val budgets by budgetDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val spendByCategory = remember(monthTransactions) {
         monthTransactions.filter { it.direction == Direction.SENT }
@@ -213,6 +220,12 @@ internal fun DashboardScreen(
                     comparisonPeriod = comparisonPeriod,
                     onComparisonPeriodChange = { comparisonPeriod = it }
                 )
+            }
+
+            if (sinceLastSalary != null) {
+                item {
+                    SincePaydayCard(sinceLastSalary)
+                }
             }
 
             item {
@@ -316,6 +329,76 @@ private fun TodaySpendCard(
                 Icon(trendIcon, contentDescription = null, tint = trendColor, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(trendText, style = MaterialTheme.typography.bodySmall, color = trendColor)
+            }
+        }
+    }
+}
+
+/**
+ * Shows what's happened since the last time the detected salary/main
+ * income actually arrived (see [SalaryDetector]) — spent so far, days
+ * elapsed, and what fraction of that credit is gone. Absent entirely (not
+ * an empty state) when no recurring income pattern is confirmed yet, since
+ * a wrong guess here would be worse than no card at all — a single
+ * dashboard card asserting "your salary was X" based on a shaky pattern
+ * match could easily look authoritative to someone glancing at their
+ * phone, so this only ever shows once the pattern is genuinely confirmed
+ * across 2+ months.
+ */
+@Composable
+private fun SincePaydayCard(info: SinceLastSalary) {
+    val spentFraction = if (info.amount > 0) (info.spentSince / info.amount).toFloat().coerceIn(0f, 1f) else 0f
+    val dateFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Since your last salary credit",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Column {
+                    Text(formatInr(info.spentSince), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "spent of ${formatInr(info.amount)} received on ${dateFormat.format(Date(info.timestampMillis))}",
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                    )
+                }
+                Text(
+                    "${info.daysSince}d ago",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.Gray
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            // MaterialTheme.colorScheme.primary is a @Composable property —
+            // it must be read here, in composable scope, NOT inside the
+            // Canvas draw lambda below (that lambda runs as DrawScope, not
+            // a @Composable context; calling it there fails to compile:
+            // "@Composable invocations can only happen from the context of
+            // a @Composable function" — this is exactly what broke the CI
+            // build; see the decision log).
+            val progressColor = MaterialTheme.colorScheme.primary
+            Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
+                drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
+                drawRoundRect(
+                    color = if (spentFraction >= 1f) SemanticRed else progressColor,
+                    size = size.copy(width = size.width * spentFraction),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f)
+                )
+            }
+            if (info.confirmedOccurrences < 3) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Based on ${info.confirmedOccurrences} months so far — gets more reliable with more history.",
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray
+                )
             }
         }
     }

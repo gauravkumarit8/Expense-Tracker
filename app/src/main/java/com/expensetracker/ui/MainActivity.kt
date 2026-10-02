@@ -88,7 +88,10 @@ import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
+import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
@@ -178,6 +181,18 @@ class MainActivity : FragmentActivity() {
                     onStopOrDispose { if (appLockEnabled) isUnlocked = false }
                 }
 
+                // While App Lock is on, hide the UI from screenshots, screen
+                // recording and the Recents thumbnail (which otherwise shows
+                // balances and transactions of a "locked" app). Trade-off:
+                // the user can't screenshot the app while the lock is on.
+                LaunchedEffect(appLockEnabled) {
+                    if (appLockEnabled) {
+                        this@MainActivity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        this@MainActivity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+
                 var notificationAccessGranted by remember { mutableStateOf(NotificationAccessHelper.isEnabled(context)) }
                 LifecycleStartEffect(Unit) {
                     notificationAccessGranted = NotificationAccessHelper.isEnabled(context)
@@ -239,6 +254,8 @@ class MainActivity : FragmentActivity() {
                 var showManualEntry by remember { mutableStateOf(false) }
                 var showAddReminder by remember { mutableStateOf(false) }
                 var showBackupDialog by remember { mutableStateOf(false) }
+                var showImportStatementDialog by remember { mutableStateOf(false) }
+                var pendingStatementAccountLabel by remember { mutableStateOf("") }
                 var showSettings by remember { mutableStateOf(false) }
                 // Full-screen overlay reached from "See all months" on the
                 // Transactions tab — mirrors the existing showSettings pattern
@@ -266,10 +283,18 @@ class MainActivity : FragmentActivity() {
                                 exportedAtMillis = System.currentTimeMillis(),
                                 transactions = transactionDao.getAllOnce(),
                                 reminders = reminderDao.getAllOnce(),
-                                budgets = budgetDao.getAllOnce()
+                                budgets = budgetDao.getAllOnce(),
+                                manualBalances = ManualBalanceStore.exportAll(context),
+                                hiddenBalanceSources = ManualBalanceStore.getHidden(context).toList()
                             )
-                            context.contentResolver.openOutputStream(uri)?.use { out ->
-                                out.write(BackupSerializer.toJson(payload).toByteArray())
+                            // File I/O + JSON encoding off the main thread (a
+                            // Drive-backed document URI can block for seconds).
+                            // A null stream used to fall through silently and
+                            // still report "Backup saved" — now it's an error.
+                            withContext(Dispatchers.IO) {
+                                val out = context.contentResolver.openOutputStream(uri)
+                                    ?: throw IllegalStateException("Could not open the destination file")
+                                out.use { it.write(BackupSerializer.toJson(payload).toByteArray()) }
                             }
                             snackbarHostState.showSnackbar("Backup saved (${payload.transactions.size} transactions)")
                         } catch (e: Exception) {
@@ -285,8 +310,10 @@ class MainActivity : FragmentActivity() {
                     scope.launch {
                         try {
                             val transactions = transactionDao.getAllOnce()
-                            context.contentResolver.openOutputStream(uri)?.use { out ->
-                                out.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray())
+                            withContext(Dispatchers.IO) {
+                                val out = context.contentResolver.openOutputStream(uri)
+                                    ?: throw IllegalStateException("Could not open the destination file")
+                                out.use { it.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray()) }
                             }
                             snackbarHostState.showSnackbar("CSV saved (${transactions.size} transactions)")
                         } catch (e: Exception) {
@@ -301,21 +328,71 @@ class MainActivity : FragmentActivity() {
                     if (uri == null) return@rememberLauncherForActivityResult
                     scope.launch {
                         try {
-                            val text = context.contentResolver.openInputStream(uri)?.use { input ->
-                                BufferedReader(InputStreamReader(input)).readText()
-                            } ?: throw IllegalStateException("Could not read file")
-                            val payload = BackupSerializer.fromJson(text)
+                            // Read + parse off the main thread, and fully validate
+                            // BEFORE touching any existing data.
+                            val payload = withContext(Dispatchers.IO) {
+                                val text = context.contentResolver.openInputStream(uri)?.use { input ->
+                                    BufferedReader(InputStreamReader(input)).readText()
+                                } ?: throw IllegalStateException("Could not read file")
+                                BackupSerializer.fromJson(text)
+                            }
+                            // Current backup format is 1; refuse anything newer.
+                            if (payload.formatVersion > 1) {
+                                throw IllegalStateException("This backup was made by a newer version of the app")
+                            }
 
-                            transactionDao.deleteAll()
-                            reminderDao.deleteAll()
-                            budgetDao.deleteAll()
-                            payload.transactions.forEach { transactionDao.insert(it) }
-                            payload.reminders.forEach { reminderDao.insert(it) }
-                            payload.budgets.forEach { budgetDao.upsert(it) }
+                            // One atomic transaction: previously this deleted all
+                            // three tables and then inserted row by row with no
+                            // transaction, so a failure or process kill midway
+                            // left the user with an empty or half-restored
+                            // database and their old data already gone. Now it
+                            // either fully applies or rolls back untouched.
+                            db.withTransaction {
+                                transactionDao.deleteAll()
+                                reminderDao.deleteAll()
+                                budgetDao.deleteAll()
+                                payload.transactions.forEach { transactionDao.insert(it) }
+                                payload.reminders.forEach { reminderDao.insert(it) }
+                                payload.budgets.forEach { budgetDao.upsert(it) }
+                            }
+                            // Only when the backup actually carries them (older
+                            // backups don't - leave current manual balances alone).
+                            payload.manualBalances?.let {
+                                ManualBalanceStore.replaceAll(context, it, payload.hiddenBalanceSources.orEmpty().toSet())
+                            }
 
                             snackbarHostState.showSnackbar("Restored ${payload.transactions.size} transactions")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Restore failed: ${e.message}")
+                        }
+                    }
+                }
+
+                val importStatementLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    val accountLabel = pendingStatementAccountLabel
+                    scope.launch {
+                        try {
+                            val csvText = withContext(Dispatchers.IO) {
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    BufferedReader(InputStreamReader(input)).readText()
+                                } ?: throw IllegalStateException("Could not read file")
+                            }
+                            val result = withContext(Dispatchers.IO) {
+                                com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
+                            }
+                            val message = buildString {
+                                append("Imported ${result.imported} transactions")
+                                if (result.skippedAsDuplicate > 0) append(", ${result.skippedAsDuplicate} already had a matching transaction")
+                                if (result.skippedUnparseable > 0) append(", ${result.skippedUnparseable} rows couldn't be read")
+                            }
+                            snackbarHostState.showSnackbar(message)
+                        } catch (e: com.autoexpensetracker.importer.StatementCsvParser.ParseException) {
+                            snackbarHostState.showSnackbar("Couldn't read this file: ${e.message}")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("Import failed: ${e.message}")
                         }
                     }
                 }
@@ -431,6 +508,18 @@ class MainActivity : FragmentActivity() {
                         if (isLocked) {
                             LockScreen(
                                 onUnlockClick = {
+                                    if (AppLockManager.deviceHasNoCredential(context)) {
+                                        // The device screen lock / biometrics were
+                                        // removed after App Lock was enabled, so
+                                        // there is nothing to authenticate with and
+                                        // the user would be locked out permanently.
+                                        // With no device credential the phone is
+                                        // open to anyone anyway, so turn the lock off.
+                                        AppLockManager.setEnabled(context, false)
+                                        appLockEnabled = false
+                                        isUnlocked = true
+                                        return@LockScreen
+                                    }
                                     BiometricAuthHelper.authenticate(
                                         activity = this@MainActivity,
                                         onSuccess = { isUnlocked = true },
@@ -454,6 +543,12 @@ class MainActivity : FragmentActivity() {
                                         csvExportLauncher.launch(filename)
                                     }
                                 },
+                                onImportStatementClick = {
+                                    requirePro {
+                                        pendingStatementAccountLabel = ""
+                                        showImportStatementDialog = true
+                                    }
+                                },
                                 isPro = isPro,
                                 onUpgradeClick = { if (isPro) showManageSubscriptionDialog = true else showUpgradeDialog = true },
                                 appLockEnabled = appLockEnabled,
@@ -469,16 +564,41 @@ class MainActivity : FragmentActivity() {
                                                 appLockEnabled = true
                                             }
                                         )
-                                    } else {
+                                    } else if (AppLockManager.deviceHasNoCredential(context)) {
+                                        // Nothing to authenticate with (see LockScreen
+                                        // handler above) - allow turning it off.
                                         AppLockManager.setEnabled(context, false)
                                         appLockEnabled = false
+                                    } else {
+                                        // Turning the lock OFF now needs the same
+                                        // verification as turning it on; before, anyone
+                                        // holding the unlocked phone could disable it.
+                                        BiometricAuthHelper.authenticate(
+                                            activity = this@MainActivity,
+                                            title = "Confirm to turn off App Lock",
+                                            subtitle = "Verify it's you before turning this off",
+                                            onSuccess = {
+                                                AppLockManager.setEnabled(context, false)
+                                                appLockEnabled = false
+                                            }
+                                        )
                                     }
                                 },
                                 onDeleteAllData = {
                                     scope.launch {
-                                        transactionDao.deleteAll()
-                                        reminderDao.deleteAll()
-                                        budgetDao.deleteAll()
+                                        db.withTransaction {
+                                            transactionDao.deleteAll()
+                                            reminderDao.deleteAll()
+                                            budgetDao.deleteAll()
+                                        }
+                                        // These live in SharedPreferences, outside the
+                                        // encrypted DB, and hold bank names, balances and
+                                        // merchant names - they used to survive "Delete
+                                        // all data".
+                                        ManualBalanceStore.clearAll(context)
+                                        com.autoexpensetracker.util.DismissedSuggestionsStore.clearAll(context)
+                                        com.autoexpensetracker.util.BudgetWarningStore.clearAll(context)
+                                        com.autoexpensetracker.util.PriceChangeStore.clearAll(context)
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
                                 },
@@ -584,6 +704,17 @@ class MainActivity : FragmentActivity() {
                             }
                         )
                     }
+                    if (showImportStatementDialog) {
+                        ImportStatementDialog(
+                            accountLabel = pendingStatementAccountLabel,
+                            onAccountLabelChange = { pendingStatementAccountLabel = it },
+                            onDismiss = { showImportStatementDialog = false },
+                            onChooseFile = {
+                                showImportStatementDialog = false
+                                importStatementLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain"))
+                            }
+                        )
+                    }
                     if (showUpgradeDialog) {
                         UpgradeDialog(
                             products = proProducts,
@@ -623,6 +754,10 @@ class MainActivity : FragmentActivity() {
         // Completes a FLEXIBLE update that finished downloading while the
         // app was backgrounded — a no-op if nothing is pending.
         if (::appUpdateHelper.isInitialized) appUpdateHelper.completeUpdateIfDownloaded()
+        // Pick up subscription changes made outside the app (cancelled /
+        // renewed / bought on another device) and reconnect to Play if the
+        // billing service dropped.
+        if (::billingManager.isInitialized) billingManager.refreshEntitlement()
     }
 
     override fun onDestroy() {

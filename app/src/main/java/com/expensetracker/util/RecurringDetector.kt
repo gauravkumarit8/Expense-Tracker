@@ -18,9 +18,13 @@ data class RecurringSuggestion(
  * calendar months at a roughly consistent amount, and suggests them as
  * candidate bill/subscription reminders.
  *
- * Deliberately simple (no ML, no fuzzy merchant-name matching beyond
- * trim+lowercase) — consistent with the project's lightweight/explainable
- * design goals. See REQUIREMENTS.md ยง2.11.
+ * Merchant grouping now goes through [MerchantMatcher] (fuzzy: strips
+ * punctuation, reference numbers, and generic transaction-type words, then
+ * groups by the remaining "brand" token) instead of exact trim+lowercase —
+ * see that object's doc comment for the reasoning and the safety net
+ * (the amount-consistency tolerance below) that keeps fuzzy grouping from
+ * merging two genuinely different merchants that happen to share a first
+ * word.
  */
 object RecurringDetector {
 
@@ -33,9 +37,16 @@ object RecurringDetector {
 
         return transactions
             .filter { it.direction == Direction.SENT && !it.needsReview && !it.merchantOrContact.isNullOrBlank() }
-            .groupBy { it.merchantOrContact!!.trim().lowercase() }
+            .groupBy { MerchantMatcher.canonicalKey(it.merchantOrContact!!) }
             .mapNotNull { (merchantKey, txs) ->
+                // dismissed/existingTitles were keyed by the OLD exact
+                // trim+lowercase name; also check every exact name in this
+                // fuzzy group so a merchant dismissed under one spelling
+                // variant doesn't reappear under a different variant that
+                // now lands in the same fuzzy bucket.
+                val exactNames = txs.map { it.merchantOrContact!!.trim().lowercase() }.toSet()
                 if (merchantKey in existingTitles || merchantKey in dismissed) return@mapNotNull null
+                if (exactNames.any { it in existingTitles || it in dismissed }) return@mapNotNull null
 
                 val distinctMonths = txs.map { monthFormat.format(Date(it.timestampMillis)) }.distinct()
                 if (distinctMonths.size < MIN_MONTHS) return@mapNotNull null
@@ -51,8 +62,18 @@ object RecurringDetector {
                     .eachCount()
                     .maxByOrNull { it.value }?.key ?: 1
 
+                // Display the most FREQUENT original spelling in the group,
+                // not just the first occurrence, so a fuzzy-merged group
+                // shows a representative real name rather than a random
+                // variant.
+                val representativeName = txs
+                    .map { it.merchantOrContact!!.trim() }
+                    .groupingBy { it }
+                    .eachCount()
+                    .maxByOrNull { it.value }?.key ?: txs.first().merchantOrContact!!.trim()
+
                 RecurringSuggestion(
-                    merchant = txs.first().merchantOrContact!!.trim(),
+                    merchant = representativeName,
                     averageAmount = average,
                     suggestedDueDay = mostCommonDay,
                     occurrenceCount = txs.size

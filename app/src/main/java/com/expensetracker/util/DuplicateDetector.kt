@@ -21,6 +21,17 @@ import kotlin.math.abs
  *   fire within seconds of each other in practice; genuinely different
  *   transactions at the same amount happening within 90s are much rarer
  *   than within a looser multi-minute window
+ * - Counterparty name, when BOTH sides captured one, must be compatible
+ *   (2026-09-21: this was missing entirely — two different people paying
+ *   the exact same amount within the 90s window, via different channels,
+ *   were being merged into a single transaction, silently dropping one of
+ *   two genuinely separate real payments. A real cross-source duplicate is
+ *   the SAME payment seen twice, so it has the SAME counterparty on both
+ *   sides whenever both paths manage to capture a name; two different
+ *   people's payments do not. Left permissive when either side has no
+ *   captured name at all — common with the generic UPI fallback pattern —
+ *   since that's a real gap in what was actually parsed, not evidence the
+ *   payment differs.)
  * - Manual ("Cash") entries are excluded entirely — a deliberate manual
  *   entry should never be silently dropped as a "duplicate" of an
  *   unrelated bank capture that happens to share an amount
@@ -55,8 +66,24 @@ object DuplicateDetector {
                 other.direction == candidate.direction &&
                 abs(other.amount - candidate.amount) < 0.01 &&
                 abs(other.timestampMillis - candidate.timestampMillis) <= WINDOW_MILLIS &&
-                other.rawTextHash != candidate.rawTextHash
+                other.rawTextHash != candidate.rawTextHash &&
+                namesCompatible(other.merchantOrContact, candidate.merchantOrContact)
         }
+    }
+
+    /**
+     * True if [a] and [b] could plausibly be the same counterparty — either
+     * one is missing (can't rule out a match with no name to compare) or
+     * they're the same name after normalizing case/whitespace, or one
+     * contains the other (handles a full name on one side and a shortened
+     * or partial capture on the other, which the two different parsing
+     * paths behind a real cross-source duplicate commonly produce).
+     */
+    private fun namesCompatible(a: String?, b: String?): Boolean {
+        val na = a?.trim()?.lowercase()
+        val nb = b?.trim()?.lowercase()
+        if (na.isNullOrBlank() || nb.isNullOrBlank()) return true
+        return na == nb || na.contains(nb) || nb.contains(na)
     }
 
     fun isLikelyDuplicate(candidate: Transaction, existing: List<Transaction>): Boolean =

@@ -62,6 +62,9 @@ import com.autoexpensetracker.util.BiometricAuthHelper
 import com.autoexpensetracker.util.DismissedSuggestionsStore
 import com.autoexpensetracker.util.RecurringDetector
 import com.autoexpensetracker.util.RecurringSuggestion
+import com.autoexpensetracker.util.SubscriptionPriceChangeDetector
+import com.autoexpensetracker.util.PriceChangeAlert
+import com.autoexpensetracker.util.PriceChangeStore
 import com.autoexpensetracker.util.MonthRange
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
@@ -107,8 +110,13 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
         val dismissed = DismissedSuggestionsStore.getAll(context)
         RecurringDetector.detect(allTransactions, reminders, dismissed)
     }
+    var priceChangeDismissedVersion by remember { mutableStateOf(0) }
+    val priceChangeAlerts = remember(allTransactions, priceChangeDismissedVersion) {
+        SubscriptionPriceChangeDetector.detect(allTransactions)
+            .filterNot { PriceChangeStore.isDismissed(context, it.merchant, it.newAmount) }
+    }
 
-    if (reminders.isEmpty() && suggestions.isEmpty()) {
+    if (reminders.isEmpty() && suggestions.isEmpty() && priceChangeAlerts.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.NotificationsActive, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
@@ -128,6 +136,23 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
                     MonthlyRecurringSpendCard(confirmedTotal = confirmedTotal, detectedTotal = detectedTotal)
                     Spacer(modifier = Modifier.height(16.dp))
                 }
+            }
+            if (priceChangeAlerts.isNotEmpty()) {
+                item {
+                    Text("Price changes detected", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                items(priceChangeAlerts, key = { it.merchant + it.newAmount }) { alert ->
+                    PriceChangeRow(
+                        alert = alert,
+                        onDismiss = {
+                            PriceChangeStore.dismiss(context, alert.merchant, alert.newAmount)
+                            priceChangeDismissedVersion++
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+                item { Spacer(modifier = Modifier.height(6.dp)) }
             }
             if (suggestions.isNotEmpty()) {
                 item {
@@ -204,6 +229,34 @@ private fun MonthlyRecurringSpendCard(confirmedTotal: Double, detectedTotal: Dou
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
+    val up = alert.changeFraction > 0
+    val pct = "%.0f".format(kotlin.math.abs(alert.changeFraction) * 100)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = if (up) Color(0xFFFFF3E0) else Color(0xFFE8F5E9)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text(alert.merchant, fontWeight = FontWeight.Medium)
+                Icon(
+                    if (up) Icons.Filled.TrendingUp else Icons.Filled.TrendingDown,
+                    contentDescription = null,
+                    tint = if (up) SemanticOrange else BrandGreen
+                )
+            }
+            Text(
+                "${formatInr(alert.previousAmount)} → ${formatInr(alert.newAmount)} (${if (up) "+" else "-"}$pct%)",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onDismiss) { Text("Got it") }
         }
     }
 }

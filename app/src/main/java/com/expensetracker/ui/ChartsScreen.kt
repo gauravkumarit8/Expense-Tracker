@@ -11,6 +11,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -123,10 +126,9 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
         hiddenSources = ManualBalanceStore.getHidden(context)
     }
 
-    val now = Calendar.getInstance()
-    val startOfMonth = (now.clone() as Calendar).apply {
-        set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
+    var selectedMonth by rememberSaveable { mutableStateOf(MonthRange.current()) }
+    val startOfMonth = selectedMonth.startOfMonthMillis()
+    val endOfMonth = selectedMonth.endOfMonthMillis()
 
     // Latest known balance per bank/account source — most recent transaction
     // (by timestamp) that happened to include a parsed balanceAfter value.
@@ -155,8 +157,8 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
             .sortedByDescending { it.asOfMillis }
     }
 
-    val thisMonthSpend = remember(allTransactions) {
-        allTransactions.filter { it.direction == Direction.SENT && it.timestampMillis >= startOfMonth }
+    val thisMonthSpend = remember(allTransactions, startOfMonth, endOfMonth) {
+        allTransactions.filter { it.direction == Direction.SENT && it.timestampMillis in startOfMonth..endOfMonth }
     }
     val byCategory = remember(thisMonthSpend) {
         thisMonthSpend.groupBy { Category.fromNameOrNull(it.category) ?: Category.OTHER }
@@ -189,7 +191,13 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
         )
     }
 
-    if (byCategory.isEmpty() && latestBalances.isEmpty()) {
+    // Only the true empty-app state (no transactions AND no balances at
+    // all) short-circuits to the full-screen placeholder. byCategory alone
+    // being empty is NOT enough now that a month is user-selectable — a
+    // selected past/future-adjacent month with zero spend must still show
+    // the month picker and trend chart so the user has a way to navigate
+    // back out of it, rather than getting stuck on a dead-end screen.
+    if (allTransactions.isEmpty() && latestBalances.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = SemanticGray)
@@ -248,17 +256,24 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
             }
         } else {
             items(latestBalances, key = { it.source }) { entry ->
-                // The balanceAfter parsed off every transaction already forms a
-                // real historical timeline per source — never charted before
-                // now. Only meaningful for auto-detected sources (a purely
-                // manual entry has no transactions to derive history from);
-                // BalanceHistoryDialog handles an empty/single-point list
-                // gracefully rather than this needing to special-case it here.
-                val history = remember(allTransactions, entry.source) {
-                    allTransactions
+                // Two history sources merged chronologically: the
+                // balanceAfter parsed off every transaction (auto-detected
+                // accounts), and every manually-entered figure for this
+                // source (2026-09-21: manual entries used to have no
+                // history at all, since every edit overwrote the last one —
+                // ManualBalanceStore now keeps the full timeline instead).
+                // A source could plausibly have both if it started
+                // auto-detected and was later manually corrected once or
+                // twice, or vice versa — merging means the chart reflects
+                // everything actually known about the account, not just
+                // whichever source happened to produce it.
+                val history = remember(allTransactions, manualEntries, entry.source) {
+                    val fromTransactions = allTransactions
                         .filter { it.bankOrSource == entry.source && it.balanceAfter != null }
-                        .sortedBy { it.timestampMillis }
                         .map { it.timestampMillis to it.balanceAfter!! }
+                    val fromManual = ManualBalanceStore.getHistory(context, entry.source)
+                        .map { it.asOfMillis to it.amount }
+                    (fromTransactions + fromManual).sortedBy { it.first }
                 }
                 BalanceRow(
                     source = entry.source,
@@ -280,14 +295,71 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
 
         if (byCategory.isNotEmpty()) {
             item {
-                Text("This month's spending by category", style = MaterialTheme.typography.titleMedium)
-                Text("Total: ${formatInr(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Spending by category", style = MaterialTheme.typography.titleMedium)
+                        Text("Total: ${formatInr(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
+                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
+                        }
+                        Text(selectedMonth.label(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        IconButton(
+                            onClick = { selectedMonth = selectedMonth.next() },
+                            enabled = !selectedMonth.isCurrentOrFuture()
+                        ) {
+                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
             }
             items(byCategory) { (category, amount) ->
                 CategoryBarRow(category, amount, total)
                 Spacer(modifier = Modifier.height(10.dp))
             }
+        } else {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Spending by category", style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
+                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
+                        }
+                        Text(selectedMonth.label(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        IconButton(
+                            onClick = { selectedMonth = selectedMonth.next() },
+                            enabled = !selectedMonth.isCurrentOrFuture()
+                        ) {
+                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
+                        }
+                    }
+                }
+                Text("No spending in ${selectedMonth.label()}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Spending trend", style = MaterialTheme.typography.titleMedium)
+            Text("Last 6 months — tap a bar to jump to that month", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Spacer(modifier = Modifier.height(12.dp))
+            SpendTrendChart(
+                allTransactions = allTransactions,
+                selectedMonth = selectedMonth,
+                onSelectMonth = { selectedMonth = it }
+            )
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
@@ -364,26 +436,54 @@ private fun BalanceHistoryDialog(
     onDismiss: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+    val pointDateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("$source balance history") },
         text = {
             if (history.size < 2) {
                 Text(
-                    "Not enough history yet to chart — this builds up automatically as more transactions are captured for this account. " +
-                        "Manually-added balances don't have a history, since each edit replaces the previous figure rather than tracking it over time.",
+                    "Not enough history yet to chart — this builds up as more transactions are captured, or each time you manually update this account's balance.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             } else {
+                var selectedIndex by remember(history) { mutableStateOf(history.size - 1) }
                 Column {
                     val minY = history.minOf { it.second }
                     val maxY = history.maxOf { it.second }
+                    val (selectedTime, selectedValue) = history[selectedIndex]
                     Text(
-                        if (visible) "${formatInr(maxY)}" else "₹ • • • • • •",
+                        pointDateFormat.format(Date(selectedTime)),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.Gray
                     )
-                    Canvas(modifier = Modifier.fillMaxWidth().height(160.dp).padding(vertical = 4.dp)) {
+                    Text(
+                        if (visible) formatInr(selectedValue) else "₹ • • • • • •",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .padding(vertical = 4.dp)
+                            .pointerInput(history) {
+                                detectTapGestures { offset ->
+                                    // size here is IntSize -> size.width is Int.
+                                    // Convert to Float so both branches of the
+                                    // if-expression produce Float, otherwise
+                                    // Kotlin infers a captured Comparable type
+                                    // and `offset.x / stepX` fails to compile.
+                                    val stepX = if (history.size > 1) {
+                                        size.width.toFloat() / (history.size - 1)
+                                    } else 0f
+                                    val nearest = if (stepX > 0f) {
+                                        (offset.x / stepX).toInt().coerceIn(0, history.size - 1)
+                                    } else 0
+                                    selectedIndex = nearest
+                                }
+                            }
+                    ) {
                         val yRange = (maxY - minY).takeIf { it > 0.0 } ?: 1.0
                         val stepX = if (history.size > 1) size.width / (history.size - 1) else 0f
                         fun pointOffset(index: Int, value: Double): Offset {
@@ -398,7 +498,19 @@ private fun BalanceHistoryDialog(
                         }
                         drawPath(path, color = BrandGreen, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
                         history.forEachIndexed { i, (_, y) ->
-                            drawCircle(color = BrandGreen, radius = 4.dp.toPx(), center = pointOffset(i, y))
+                            val p = pointOffset(i, y)
+                            if (i == selectedIndex) {
+                                drawLine(
+                                    color = BrandGreen.copy(alpha = 0.3f),
+                                    start = Offset(p.x, 0f),
+                                    end = Offset(p.x, size.height),
+                                    strokeWidth = 1.dp.toPx()
+                                )
+                                drawCircle(color = Color.White, radius = 7.dp.toPx(), center = p)
+                                drawCircle(color = BrandGreen, radius = 7.dp.toPx(), center = p, style = Stroke(width = 2.5.dp.toPx()))
+                            } else {
+                                drawCircle(color = BrandGreen, radius = 4.dp.toPx(), center = p)
+                            }
                         }
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -412,7 +524,7 @@ private fun BalanceHistoryDialog(
                         color = Color.Gray
                     )
                     Text(
-                        "${history.size} balance points captured",
+                        "${history.size} balance points captured — tap the chart to see any point",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.Gray
                     )
@@ -492,3 +604,82 @@ private fun CategoryBarRow(category: Category, amount: Double, total: Double) {
         }
     }
 }
+
+/**
+ * Total SENT spend for each of the trailing 6 real-world months (ending at
+ * the actual current month, independent of [selectedMonth] navigation, so
+ * the window doesn't shift under the user as they browse). Tapping a bar
+ * jumps [selectedMonth] to that month — this doubles as a second, more
+ * visual month picker alongside the prev/next arrows above.
+ */
+@Composable
+private fun SpendTrendChart(
+    allTransactions: List<Transaction>,
+    selectedMonth: MonthRange,
+    onSelectMonth: (MonthRange) -> Unit
+) {
+    val months = remember {
+        val current = MonthRange.current()
+        (5 downTo 0).map { offset ->
+            var m = current
+            repeat(offset) { m = m.previous() }
+            m
+        }
+    }
+    val totals = remember(allTransactions, months) {
+        months.map { m ->
+            m to allTransactions
+                .filter { it.direction == Direction.SENT && m.contains(it.timestampMillis) }
+                .sumOf { it.amount }
+        }
+    }
+    val maxTotal = totals.maxOfOrNull { it.second } ?: 0.0
+
+    if (maxTotal <= 0.0) {
+        Text("Not enough history yet to show a trend.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        return
+    }
+
+    val monthShortFormat = remember { SimpleDateFormat("MMM", Locale.getDefault()) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(140.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        totals.forEach { (month, amount) ->
+            val isSelected = month == selectedMonth
+            val fraction = (amount / maxTotal).toFloat().coerceIn(0f, 1f)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+                if (isSelected && amount > 0) {
+                    Text(formatInrWhole(amount), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.55f)
+                        .fillMaxHeight(fraction.coerceAtLeast(0.02f))
+                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                        .background(if (isSelected) SemanticIndigo else SemanticIndigo.copy(alpha = 0.35f))
+                        .clickable(onClick = { onSelectMonth(month) })
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    monthShortFormat.format(Date(month.startOfMonthMillis())),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isSelected) SemanticIndigo else Color.Gray,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        }
+    }
+}
+

@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "patterns": [
     {
       "senderMatch": "HDFCBK|HDFC",
@@ -150,7 +150,6 @@
   "excludeKeywords": [
     "OTP",
     "one time password",
-    "do not share",
     "verification code",
     "ipo",
     "mandate"

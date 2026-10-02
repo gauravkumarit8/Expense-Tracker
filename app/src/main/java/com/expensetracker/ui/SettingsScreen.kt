@@ -158,6 +158,60 @@ internal fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, on
     )
 }
 
+// ---------- IMPORT BANK STATEMENT ----------
+
+/**
+ * Collects an optional account label before handing off to the system file
+ * picker. The label becomes the imported rows' `bankOrSource` — giving it
+ * the SAME name already used elsewhere in the app for this account (e.g.
+ * "HDFCBK") lets the imported balance history merge with notification-
+ * captured history for that account on the Charts screen instead of
+ * showing up as a separate, unrelated pseudo-account.
+ */
+@Composable
+internal fun ImportStatementDialog(
+    accountLabel: String,
+    onAccountLabelChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onChooseFile: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import bank statement") },
+        text = {
+            Column {
+                Text(
+                    "Import a CSV statement downloaded from your bank to backfill history from before you installed the app. " +
+                        "Common HDFC/ICICI/SBI/Axis-style column layouts are recognized automatically.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = accountLabel,
+                    onValueChange = onAccountLabelChange,
+                    label = { Text("Account name (optional)") },
+                    placeholder = { Text("e.g. HDFC Savings") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Transactions that look like ones already captured from a notification (same date, amount, and direction) are skipped automatically.",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onChooseFile) {
+                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Choose file")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 // ---------- SETTINGS SCREEN ----------
 
 @Composable
@@ -166,6 +220,7 @@ internal fun SettingsScreen(
     onEnableNotificationAccess: () -> Unit,
     onBackupRestoreClick: () -> Unit,
     onCsvExportClick: () -> Unit,
+    onImportStatementClick: () -> Unit,
     isPro: Boolean,
     onUpgradeClick: () -> Unit,
     appLockEnabled: Boolean,
@@ -288,6 +343,15 @@ internal fun SettingsScreen(
                     title = "Export to CSV",
                     subtitle = "For opening in Excel, Sheets, etc. — not for restoring",
                     onClick = onCsvExportClick
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Filled.UploadFile,
+                    title = "Import bank statement",
+                    subtitle = "Backfill history from a CSV downloaded from your bank",
+                    onClick = onImportStatementClick
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }

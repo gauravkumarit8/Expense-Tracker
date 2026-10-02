@@ -44,9 +44,20 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
         )
         .build()
 
+    // Prevents overlapping startConnection() calls (resume + refresh +
+    // disconnect callback can all ask for a connection at once).
+    private val connecting = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun startConnection(onReady: () -> Unit = {}) {
+        if (billingClient.isReady) {
+            refreshEntitlement()
+            onReady()
+            return
+        }
+        if (!connecting.compareAndSet(false, true)) return
         billingClient.startConnection(object : BillingClientStateListener {
             override fun onBillingSetupFinished(result: BillingResult) {
+                connecting.set(false)
                 if (result.responseCode == BillingClient.BillingResponseCode.OK) {
                     refreshEntitlement()
                     queryProducts()
@@ -57,13 +68,25 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
             }
 
             override fun onBillingServiceDisconnected() {
-                // BillingClient can auto-reconnect on the next call
+                // NOT automatic: BillingClient does not reconnect by itself
+                // (the old comment here claimed it did). Clear the flag so
+                // the next refreshEntitlement() - called on every app
+                // resume - starts a fresh connection.
+                connecting.set(false)
             }
         })
     }
 
     /** Re-checks current entitlement against Google Play. */
     fun refreshEntitlement() {
+        // Not connected (never connected, or the Play service dropped us):
+        // queryPurchasesAsync would just fail with SERVICE_DISCONNECTED and
+        // leave a stale entitlement. Reconnect instead; a successful setup
+        // calls back into this method.
+        if (!billingClient.isReady) {
+            startConnection()
+            return
+        }
         val params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
             .build()
@@ -71,9 +94,30 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
         billingClient.queryPurchasesAsync(params) { result, purchases ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) return@queryPurchasesAsync
 
+            // Signature-checked against this app's Play Console licensing
+            // key (see PurchaseSignatureVerifier's doc comment for what
+            // this does and does not protect against) — previously any
+            // purchase the Billing library reported as PURCHASED was
+            // trusted outright, with nothing tying that local answer back
+            // to Google cryptographically.
             val activeSub = purchases.firstOrNull {
                 it.purchaseState == Purchase.PurchaseState.PURCHASED &&
-                    (it.products.contains(PRODUCT_ID_MONTHLY) || it.products.contains(PRODUCT_ID_YEARLY))
+                    (it.products.contains(PRODUCT_ID_MONTHLY) || it.products.contains(PRODUCT_ID_YEARLY)) &&
+                    PurchaseSignatureVerifier.isValid(it)
+            }
+
+            // Distinguished from "no purchase at all" purely for
+            // diagnostics: this specific combination (Play says PURCHASED,
+            // but the signature doesn't verify) is the one worth knowing
+            // about if it ever happens on a real device, since it's either
+            // a tampered purchase or a bug in this verification code.
+            val unverifiedPurchase = purchases.firstOrNull {
+                it.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                    (it.products.contains(PRODUCT_ID_MONTHLY) || it.products.contains(PRODUCT_ID_YEARLY)) &&
+                    !PurchaseSignatureVerifier.isValid(it)
+            }
+            if (unverifiedPurchase != null) {
+                Log.w(TAG, "A PURCHASED subscription failed signature verification and was NOT granted Pro access")
             }
 
             _isPro.value = activeSub != null
@@ -233,7 +277,12 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
     }
 
     override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
-        if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+        // ITEM_ALREADY_OWNED means Play already has this subscription on the
+        // account but our local state didn't know (e.g. bought on another
+        // device, or a previous refresh failed). Re-querying repairs it.
+        if (result.responseCode == BillingClient.BillingResponseCode.OK ||
+            result.responseCode == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED
+        ) {
             refreshEntitlement()
         }
     }

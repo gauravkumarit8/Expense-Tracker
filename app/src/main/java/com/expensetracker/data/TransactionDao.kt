@@ -41,8 +41,17 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE needsReview = 1 ORDER BY timestampMillis DESC")
     fun getNeedsReview(): Flow<List<Transaction>>
 
-    @Query("SELECT COUNT(*) FROM transactions WHERE rawTextHash = :hash")
-    suspend fun existsByHash(hash: String): Int
+    // 2026-09-28: this used to match on hash alone, with no time bound, so
+    // an exact repeat of the SAME text was dropped forever no matter how
+    // much time had passed. That's correct for a re-posted/updated
+    // notification of the same event (the common case this exists for),
+    // but a genuinely separate later transaction with identical text (a
+    // generic app notification with no amount/ref/timestamp baked in, at
+    // the same merchant for the same amount) would be silently discarded
+    // too. Bounded to a window so only near-in-time repeats are treated as
+    // the same notification.
+    @Query("SELECT COUNT(*) FROM transactions WHERE rawTextHash = :hash AND timestampMillis BETWEEN :start AND :end")
+    suspend fun existsByHashNear(hash: String, start: Long, end: Long): Int
 
     /**
      * Narrow window query backing the cross-source duplicate check — only
@@ -78,9 +87,21 @@ interface TransactionDao {
     @RoomTransaction
     suspend fun insertIfNotDuplicate(
         transaction: Transaction,
-        duplicateWindowMillis: Long = 90_000L
+        duplicateWindowMillis: Long = 90_000L,
+        // Deliberately much larger than duplicateWindowMillis: this covers
+        // a notification being re-posted/updated by the OS or the source
+        // app well after the original 90s cross-source window, which is
+        // sized for a DIFFERENT event (two apps reporting one real-world
+        // payment) arriving close together, not for how late a repost of
+        // the exact same notification can land.
+        exactHashWindowMillis: Long = 24 * 60 * 60 * 1000L
     ): InsertOutcome {
-        if (existsByHash(transaction.rawTextHash) > 0) {
+        if (existsByHashNear(
+                transaction.rawTextHash,
+                transaction.timestampMillis - exactHashWindowMillis,
+                transaction.timestampMillis + exactHashWindowMillis
+            ) > 0
+        ) {
             return InsertOutcome.ExactDuplicateSkipped
         }
 

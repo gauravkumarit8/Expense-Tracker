@@ -49,8 +49,19 @@ object ManualBalanceStore {
     @Serializable
     data class Entry(val source: String, val amount: Double, val asOfMillis: Long)
 
-    /** All manual entries/overrides currently stored, regardless of hidden state. */
-    fun getAll(context: Context): List<Entry> {
+    // 2026-09-21: every upsert() used to overwrite the prior entry for a
+    // source outright, so a manual account could never build up history —
+    // every edit erased the previous figure instead of adding to a
+    // timeline (see the old doc comment above [getHistory], which used to
+    // say manual entries "don't have a history" — that was a real
+    // limitation, not just documentation of intent). Now every upsert()
+    // appends, keeping the full timeline. getAll() below preserves its
+    // existing latest-per-source contract for the balance list, computed
+    // from the full stored history rather than being the only thing
+    // stored.
+
+    /** Every manual entry ever recorded, across all sources, unsorted. */
+    private fun getAllRaw(context: Context): List<Entry> {
         val raw = prefs(context).getString(KEY_ENTRIES, null) ?: return emptyList()
         return try {
             json.decodeFromString(entryListSerializer, raw)
@@ -61,23 +72,35 @@ object ManualBalanceStore {
         }
     }
 
-    /** Adds a new manual balance, or overwrites the existing one for [source]. Un-hides [source] if it was previously deleted. */
+    private fun saveAllRaw(context: Context, entries: List<Entry>) {
+        prefs(context).edit().putString(KEY_ENTRIES, json.encodeToString(entryListSerializer, entries)).apply()
+    }
+
+    /** Latest manual entry per source, regardless of hidden state — what the balance list itself displays. */
+    fun getAll(context: Context): List<Entry> =
+        getAllRaw(context)
+            .groupBy { it.source }
+            .mapNotNull { (_, entries) -> entries.maxByOrNull { it.asOfMillis } }
+
+    /** Full history for one source, oldest first — powers the balance-history chart for manually-tracked accounts, same as auto-detected ones already get from transaction data. */
+    fun getHistory(context: Context, source: String): List<Entry> =
+        getAllRaw(context).filter { it.source == source }.sortedBy { it.asOfMillis }
+
+    /** Adds a new manual balance, or a new history point for an existing [source]. Un-hides [source] if it was previously deleted. */
     fun upsert(context: Context, source: String, amount: Double, asOfMillis: Long = System.currentTimeMillis()) {
-        val updated = getAll(context).filterNot { it.source == source } + Entry(source, amount, asOfMillis)
-        prefs(context).edit().putString(KEY_ENTRIES, json.encodeToString(entryListSerializer, updated)).apply()
+        saveAllRaw(context, getAllRaw(context) + Entry(source, amount, asOfMillis))
         unhide(context, source)
     }
 
-    /** Clears any manual override for [source] (auto-detection, if any, takes back over — unless also hidden). */
+    /** Clears all manually-recorded history for [source] (auto-detection, if any, takes back over — unless also hidden). */
     fun removeOverride(context: Context, source: String) {
-        val updated = getAll(context).filterNot { it.source == source }
-        prefs(context).edit().putString(KEY_ENTRIES, json.encodeToString(entryListSerializer, updated)).apply()
+        saveAllRaw(context, getAllRaw(context).filterNot { it.source == source })
     }
 
     fun getHidden(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_HIDDEN, emptySet()) ?: emptySet()
 
-    /** "Deletes" a balance card: clears any override and hides the source going forward. */
+    /** "Deletes" a balance card: clears all manual history and hides the source going forward. */
     fun delete(context: Context, source: String) {
         removeOverride(context, source)
         val current = getHidden(context).toMutableSet()
@@ -90,6 +113,26 @@ object ManualBalanceStore {
         if (current.remove(source)) {
             prefs(context).edit().putStringSet(KEY_HIDDEN, current).apply()
         }
+    }
+
+    /** Every entry ever recorded, unsorted - used by backup. */
+    fun exportAll(context: Context): List<Entry> = getAllRaw(context)
+
+    /**
+     * Replaces ALL manual balance data (entries + hidden set) - used by
+     * restore. commit() so the write is durable before the caller reports
+     * success.
+     */
+    fun replaceAll(context: Context, entries: List<Entry>, hidden: Set<String>) {
+        prefs(context).edit()
+            .putString(KEY_ENTRIES, json.encodeToString(entryListSerializer, entries))
+            .putStringSet(KEY_HIDDEN, hidden.toSet())
+            .commit()
+    }
+
+    /** Wipes everything this store holds (used by "Delete all data"). */
+    fun clearAll(context: Context) {
+        prefs(context).edit().clear().commit()
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
