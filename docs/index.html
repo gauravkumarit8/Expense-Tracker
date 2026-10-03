@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Auto Expense Tracker — your spending, written down automatically</title>
+<meta name="description" content="Auto-tracks every bank & UPI expense from your phone's notifications — no SMS access, no bank login, 100% on-device. Free on Google Play.">
+<link rel="canonical" href="https://gauravkumarit8.github.io/Expense-Tracker/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Auto Expense Tracker — your spending, written down automatically">
+<meta property="og:description" content="Reads your bank & UPI notifications instantly and tracks spending automatically — no SMS access, no bank login, 100% on-device.">
+<meta property="og:url" content="https://gauravkumarit8.github.io/Expense-Tracker/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Auto Expense Tracker — your spending, written down automatically">
+<meta name="twitter:description" content="Reads your bank & UPI notifications instantly and tracks spending automatically — no SMS access, no bank login, 100% on-device.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Auto Expense Tracker",
+  "applicationCategory": "FinanceApplication",
+  "operatingSystem": "Android",
+  "description": "Auto-tracks every bank & UPI expense from your phone's notifications — no SMS access, no bank login, 100% on-device.",
+  "url": "https://gauravkumarit8.github.io/Expense-Tracker/",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "INR" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F1EDE0;
+    --bg-alt: #E7E0CC;
+    --ink: #1B2430;
+    --ink-soft: #52596a;
+    --gold: #93631B;
+    --teal: #1F5C50;
+    --line: rgba(27,36,48,0.18);
+    --card-bg: #FFFFFF;
+    --card-line: rgba(27,36,48,0.12);
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121A24;
+      --bg-alt: #1B2531;
+      --ink: #F1EDE0;
+      --ink-soft: #AEB7C2;
+      --gold: #D7A748;
+      --teal: #4FA696;
+      --line: rgba(241,237,224,0.16);
+      --card-bg: #1C2733;
+      --card-line: rgba(241,237,224,0.14);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121A24;
+    --bg-alt: #1B2531;
+    --ink: #F1EDE0;
+    --ink-soft: #AEB7C2;
+    --gold: #D7A748;
+    --teal: #4FA696;
+    --line: rgba(241,237,224,0.16);
+    --card-bg: #1C2733;
+    --card-line: rgba(241,237,224,0.14);
+  }
+  html { scroll-behavior: smooth; scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: 'Source Serif 4', Georgia, serif; font-weight: 600; margin: 0; }
+  a { color: inherit; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* header */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .header-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; max-width: 1040px; margin: 0 auto; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 1.05rem; }
+  .brand svg { flex-shrink: 0; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: 0.95rem;
+    padding: 11px 20px; border-radius: 3px; text-decoration: none;
+    background: var(--ink); color: var(--bg);
+    border: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  .btn-ghost { background: transparent; color: var(--ink); }
+  .btn-sm { padding: 9px 16px; font-size: 0.88rem; }
+
+  /* hero */
+  .hero { padding: 72px 0 56px; }
+  .hero-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 56px; align-items: center; }
+  .eyebrow { color: var(--gold); font-weight: 600; font-size: 0.95rem; margin-bottom: 14px; }
+  h1.headline { font-size: clamp(2.1rem, 4.4vw, 3.15rem); line-height: 1.08; letter-spacing: -0.01em; max-width: 14ch; }
+  .sub { margin-top: 20px; max-width: 46ch; color: var(--ink-soft); font-size: 1.1rem; }
+  .cta-row { margin-top: 30px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .cta-note { color: var(--ink-soft); font-size: 0.85rem; margin-top: 10px; }
+
+  /* passbook mock card */
+  .passbook {
+    background: var(--card-bg);
+    border: 1px solid var(--card-line);
+    border-radius: 6px;
+    box-shadow: 0 1px 0 var(--card-line);
+    overflow: hidden;
+  }
+  .passbook-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 18px 22px 14px; border-bottom: 1px dashed var(--card-line);
+  }
+  .passbook-head .label { font-size: 0.78rem; letter-spacing: 0.02em; color: var(--ink-soft); }
+  .passbook-head .bal { font-family: 'Source Serif 4', serif; font-size: 1.3rem; }
+  .ledger-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 22px; border-bottom: 1px solid var(--card-line);
+    font-size: 0.92rem;
+  }
+  .ledger-row:last-child { border-bottom: none; }
+  .ledger-row .who { font-weight: 500; }
+  .ledger-row .meta { color: var(--ink-soft); font-size: 0.8rem; margin-top: 2px; }
+  .ledger-row .amt { font-weight: 600; }
+  .amt.neg { color: var(--ink); }
+  .amt.pos { color: var(--teal); }
+  .passbook-foot { padding: 12px 22px; font-size: 0.78rem; color: var(--ink-soft); display:flex; align-items:center; gap:8px; }
+
+  /* stamp row */
+  .stamps { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 36px 0; }
+  .stamp-row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .stamp {
+    display: flex; align-items: center; gap: 10px;
+    border: 2px solid var(--teal); color: var(--teal);
+    border-radius: 999px; padding: 10px 20px;
+    font-weight: 600; font-size: 0.88rem;
+    transform: rotate(-1.5deg);
+  }
+  .stamp:nth-child(2) { transform: rotate(1deg); }
+  .stamp:nth-child(3) { transform: rotate(-0.5deg); }
+
+  /* features */
+  .section { padding: 72px 0; }
+  .section-head { max-width: 50ch; margin-bottom: 36px; }
+  .section-head h2 { font-size: clamp(1.6rem, 3vw, 2.1rem); }
+  .section-head p { margin-top: 12px; color: var(--ink-soft); }
+  .feature-list { border-top: 1px solid var(--line); }
+  .feature {
+    display: grid; grid-template-columns: 44px 1fr 1.4fr; gap: 20px; align-items: start;
+    padding: 24px 0; border-bottom: 1px solid var(--line);
+  }
+  .feature-icon { color: var(--gold); margin-top: 2px; }
+  .feature h3 { font-size: 1.05rem; font-weight: 600; font-family: 'IBM Plex Sans', sans-serif; }
+  .feature p { margin: 6px 0 0; color: var(--ink-soft); font-size: 0.95rem; max-width: 50ch; }
+
+  /* how it works */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .step .step-no { font-family: 'Source Serif 4', serif; font-size: 1.6rem; color: var(--gold); }
+  .step h3 { margin-top: 10px; font-size: 1.05rem; font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; }
+  .step p { margin-top: 8px; color: var(--ink-soft); font-size: 0.95rem; }
+
+  /* closing band */
+  .band { background: var(--ink); color: var(--bg); padding: 64px 0; text-align: left; }
+  .band h2 { color: var(--bg); font-size: clamp(1.7rem, 3.4vw, 2.3rem); max-width: 18ch; }
+  .band .btn { background: var(--bg); color: var(--ink); border-color: var(--bg); margin-top: 24px; }
+  .band p.sub { color: color-mix(in srgb, var(--bg) 70%, transparent); }
+
+  footer { padding: 36px 0 calc(36px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); }
+  .foot-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 0.85rem; color: var(--ink-soft); }
+  .foot-links { display: flex; gap: 20px; flex-wrap: wrap; }
+  .foot-links a { text-decoration: none; }
+  .foot-links a:hover { text-decoration: underline; }
+
+  .gallery { display: flex; gap: 20px; overflow-x: auto; padding-bottom: 10px; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+  .gallery-item { flex: 0 0 auto; width: 220px; scroll-snap-align: start; }
+  .gallery-item img { width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--card-line); display: block; }
+  .gallery-item p { margin-top: 10px; font-size: 0.85rem; color: var(--ink-soft); line-height: 1.45; }
+
+  @media (max-width: 760px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+    .feature { grid-template-columns: 36px 1fr; }
+    .feature p { grid-column: 2 / 3; }
+    .steps { grid-template-columns: 1fr; }
+  }
+
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+      Auto Expense Tracker
+    </div>
+    <a class="btn btn-sm" href="https://play.google.com/store/apps/details?id=com.autoexpensetracker">Get it on Google Play</a>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">Bank &amp; UPI · Private by design</div>
+      <h1 class="headline">Your spending, written down automatically.</h1>
+      <p class="sub">It reads your bank and UPI transaction notifications the moment they arrive, and turns them into a categorised ledger — without SMS access, without a bank login, without typing a single entry.</p>
+      <div class="cta-row">
+        <a class="btn" href="https://play.google.com/store/apps/details?id=com.autoexpensetracker">Install on Google Play</a>
+        <a class="btn btn-ghost" href="#privacy">How the privacy works</a>
+      </div>
+      <p class="cta-note">Free, with occasional ads. Pro removes them and adds export &amp; backup.</p>
+    </div>
+    <div class="passbook" aria-hidden="true">
+      <div class="passbook-head">
+        <span class="label">THIS MONTH</span>
+        <span class="bal num">₹18,420 spent</span>
+      </div>
+      <div class="ledger-row">
+        <div><div class="who">Swiggy</div><div class="meta">Captured from notification · 8:42 PM</div></div>
+        <div class="amt neg num">−₹340</div>
+      </div>
+      <div class="ledger-row">
+        <div><div class="who">Salary</div><div class="meta">Auto-detected recurring credit</div></div>
+        <div class="amt pos num">+₹52,000</div>
+      </div>
+      <div class="ledger-row">
+        <div><div class="who">Electricity Bill</div><div class="meta">Reminder set for the 4th</div></div>
+        <div class="amt neg num">−₹1,180</div>
+      </div>
+      <div class="passbook-foot">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>
+        Encrypted on this device. Nothing uploaded.
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="stamps" id="privacy">
+  <div class="wrap stamp-row">
+    <div class="stamp"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7l8-4 8 4M4 7v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7"/><path d="M15 2L9 22" stroke-width="2.4" opacity="0" /></svg> No SMS access</div>
+    <div class="stamp"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M8 10V7a4 4 0 018 0v3"/></svg> No bank login</div>
+    <div class="stamp"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 18h6"/></svg> 100% on your phone</div>
+  </div>
+</div>
+
+<section class="section" style="padding-top:0;">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>See it in action</h2>
+      <p>Real screens from the app, not a mockup.</p>
+    </div>
+    <div class="gallery">
+      <div class="gallery-item">
+        <img src="images/dashboard.webp" alt="Home screen showing this month's net, amount sent, and amount received, with budgets to watch" loading="lazy" width="540" height="1170">
+        <p>See your month at a glance — net, sent, received, and which budgets need attention</p>
+      </div>
+      <div class="gallery-item">
+        <img src="images/recent-activity.webp" alt="Recent activity feed showing bank and UPI transactions captured automatically with merchant, amount and time" loading="lazy" width="540" height="1170">
+        <p>Every bank & UPI alert captured automatically — merchant, amount, and time, no typing</p>
+      </div>
+      <div class="gallery-item">
+        <img src="images/reminders.webp" alt="Reminders screen showing monthly recurring spend and upcoming SIP due dates" loading="lazy" width="540" height="1170">
+        <p>Recurring bills and SIPs found automatically, with their due dates and amounts</p>
+      </div>
+      <div class="gallery-item">
+        <img src="images/charts.webp" alt="Charts screen showing account balance with a hide toggle and spending by category" loading="lazy" width="540" height="1170">
+        <p>A clear category breakdown every month — with a tap to hide balances from view</p>
+      </div>
+      <div class="gallery-item">
+        <img src="images/budgets.webp" alt="Budgets screen showing a monthly limit set per category with over-budget warnings" loading="lazy" width="540" height="1170">
+        <p>Set a monthly limit per category and see exactly where you stand</p>
+      </div>
+      <div class="gallery-item">
+        <img src="images/settings.webp" alt="Settings screen showing backup, CSV export, notification access, and delete all data" loading="lazy" width="540" height="1170">
+        <p>Full control, always — export, back up, or erase everything with one tap</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Why it works differently</h2>
+      <p>Most expense trackers ask for SMS access or a bank login. This one doesn't need either — and that was a deliberate decision, not a missing feature.</p>
+    </div>
+    <div class="feature-list">
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
+        <h3>Auto-capture</h3>
+        <p>Bank and UPI notifications are parsed the instant they land — not just SMS, which is where most trackers stop and where they miss transactions.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19V9M12 19V5M20 19v-7"/></svg></div>
+        <h3>Budgets that warn you early</h3>
+        <p>Set a monthly limit per category and get told you're on track to cross it — before it happens, not after.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg></div>
+        <h3>Reminders that find themselves</h3>
+        <p>Recurring bills and subscriptions are detected from your own history — including when a subscription quietly raises its price.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7l8-4 8 4M4 7v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7"/></svg></div>
+        <h3>Encrypted, on-device, always</h3>
+        <p>Your transaction history is stored with on-device encryption. There's no server to breach, because there's no server at all.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h18M3 6h18M3 18h12"/></svg></div>
+        <h3>Backfill with a bank statement</h3>
+        <p>Import a CSV statement from your bank to bring in history from before you installed the app.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M19 21V7l-7-4-7 4v14"/><path d="M9 21v-6h6v6"/></svg></div>
+        <h3>Full control, always</h3>
+        <p>Export to CSV, back up and restore locally, or erase everything on the device with one tap. It's your data.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" style="padding-top:0;">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>Set up once, in under a minute</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-no num">01</div>
+        <h3>Install the app</h3>
+        <p>Free on Google Play. No sign-up, no account to create.</p>
+      </div>
+      <div class="step">
+        <div class="step-no num">02</div>
+        <h3>Grant notification access</h3>
+        <p>One Android permission — not SMS, not your contacts, not your bank.</p>
+      </div>
+      <div class="step">
+        <div class="step-no num">03</div>
+        <h3>It starts tracking itself</h3>
+        <p>Every bank and UPI alert from then on becomes a categorised entry, automatically.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="band">
+  <div class="wrap">
+    <h2>Stop writing it down by hand.</h2>
+    <p class="sub">It's free to start, takes a minute to set up, and never asks to see your SMS or your bank password.</p>
+    <a class="btn" href="https://play.google.com/store/apps/details?id=com.autoexpensetracker">Install on Google Play</a>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap foot-row">
+    <span>© 2026 Auto Expense Tracker · Built in Bengaluru, India</span>
+    <div class="foot-links">
+      <a href="https://gauravkumarit8.github.io/Expense-Tracker/privacy-policy.html">Privacy Policy</a>
+      <a href="mailto:gaurav954624@gmail.com">Contact support</a>
+      <a href="https://play.google.com/store/apps/details?id=com.autoexpensetracker">Google Play</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
