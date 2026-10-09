@@ -142,12 +142,13 @@ class TransactionParser(context: Context) {
         val amount = amountStr?.replace(",", "")?.toDoubleOrNull()
         val trimmedCounterparty = counterparty?.trim()?.takeIf { it.isNotBlank() }
 
-        // Balance extraction is bank-agnostic (verified against real ECS and
-        // Slice samples using "Avl Bal"/"Avl. Bal." phrasing) — applied to
-        // every message rather than per-bank, since it's a single common
-        // convention across banks. Absent if the message doesn't include it.
-        val balanceMatch = safeFind(BALANCE_REGEX, text)
-        val balanceAfter = balanceMatch?.groupValues?.getOrNull(1)?.replace(",", "")?.toDoubleOrNull()
+        // Balance extraction is bank-agnostic and two-tier — see extractBalance().
+        // Tier 1 is the original "Avl Bal" regex (verified against real ECS,
+        // Slice and Union Bank samples) and always wins when it matches, so
+        // those banks behave exactly as before. Tier 2 covers other common
+        // labels. Absent if the message doesn't include a balance at all —
+        // many UPI debit/credit alerts genuinely don't.
+        val balanceAfter = extractBalance(text)
 
         // If we couldn't confidently extract an amount, still record it but
         // flag for manual review rather than silently dropping it.
@@ -172,6 +173,23 @@ class TransactionParser(context: Context) {
         // messages. Same colon gap existed in bank_patterns.json's Union
         // Bank amount regexes, fixed alongside this.
         private const val BALANCE_REGEX = "(?i)avl\\.?\\s*bal\\.?\\s*[-:]?\\s*(?:rs\\.?:?|inr)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
+        // Tier-2 balance labels, used only when the tier-1 "Avl Bal" regex finds
+        // nothing. Before this, any phrasing other than a literal "Avl Bal"
+        // ("Available Balance is Rs", "Bal Rs.", "Balance: INR", "Clear Bal",
+        // "Total Avail.bal INR", a rupee sign...) silently left balanceAfter
+        // null, which is why most banks showed no balance. Group 1 captures up
+        // to two words immediately BEFORE "bal"/"balance" so
+        // BALANCE_NOT_ACCOUNT_REGEX can reject figures that aren't the
+        // account's balance; group 2 is the amount.
+        private const val BALANCE_FALLBACK_REGEX = "(?i)((?:[a-z/]+[.\\s-]+){0,2})\\bbal(?:ance)?\\b\\.?\\s*(?:is|of|[-:])?\\s*(?:rs\\.?:?|inr\\.?:?|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
+
+        // "Min Bal of Rs 5000", "Outstanding Balance Rs 2,50,000", "Average
+        // Monthly Balance of Rs 10,000" and similar are thresholds or amounts
+        // OWED, not what's in the account. Showing one as the balance would be
+        // worse than showing none, so these are skipped.
+        private val BALANCE_NOT_ACCOUNT_REGEX = Regex(
+            "(?i)\\b(?:min|minimum|outstanding|o/s|due|limit|maintain|maintaining|required|emi|loan|average|avg|monthly|quarterly)\\b"
+        )
         private const val PAID_YOU_REGEX = "(?i)^(?:mr\\.?|mrs\\.?|ms\\.?)?\\s*([A-Za-z ]{2,60}?)\\s+paid you\\s+(?:rs\\.?|inr|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
 
         // Matches the standard "never/do not share your OTP/PIN/CVV..."
@@ -263,6 +281,39 @@ class TransactionParser(context: Context) {
     }
 
     /** Runs regex.find with a hard timeout to prevent ReDoS from hanging the parser. */
+    /**
+     * Account balance from the message, or null. Tier 1 (unchanged) first;
+     * then tier 2, skipping any match whose two preceding words mark it as a
+     * minimum/outstanding/limit-style figure rather than the real balance.
+     * Behaviour was simulated against positives, traps and the previously
+     * verified formats before shipping (see the decision log).
+     */
+    private fun extractBalance(text: String): Double? {
+        safeFind(BALANCE_REGEX, text)
+            ?.groupValues?.getOrNull(1)?.replace(",", "")?.toDoubleOrNull()
+            ?.let { return it }
+
+        for (match in safeFindAll(BALANCE_FALLBACK_REGEX, text)) {
+            if (BALANCE_NOT_ACCOUNT_REGEX.containsMatchIn(match.groupValues[1])) continue
+            val value = match.groupValues[2].replace(",", "").toDoubleOrNull() ?: continue
+            return value
+        }
+        return null
+    }
+
+    private fun safeFindAll(pattern: String, text: String): List<MatchResult> {
+        val task = Callable { Regex(pattern).findAll(text).toList() }
+        val future = regexExecutor.submit(task)
+        return try {
+            future.get(200, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            future.cancel(true)
+            emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     private fun safeFind(pattern: String, text: String): MatchResult? {
         val task = Callable { Regex(pattern).find(text) }
         val future = regexExecutor.submit(task)
