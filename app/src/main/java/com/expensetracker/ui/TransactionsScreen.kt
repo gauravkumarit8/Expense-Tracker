@@ -953,13 +953,55 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
     }
 
     val dayFormat = remember { SimpleDateFormat("EEE, d MMM", Locale.getDefault()) }
-    val grouped = remember(transactions) { transactions.groupBy { dayFormat.format(Date(it.timestampMillis)) } }
+    // Group by the FULL date, not the display label. "Mon, 5 Oct" carries no
+    // year, so in an all-time list two different years' 5 Oct (same weekday
+    // every 5-6-11 years) used to share one header — harmless when the header
+    // was just a label, but wrong now that each header also shows a net total.
+    val dayKeyFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    val grouped = remember(transactions) { transactions.groupBy { dayKeyFormat.format(Date(it.timestampMillis)) } }
 
     LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
-        grouped.forEach { (day, items) ->
-            item { Text(day, style = MaterialTheme.typography.labelMedium, color = Color.Gray, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)) }
-            items(items) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
+        grouped.forEach { (_, dayTransactions) ->
+            item {
+                DayHeader(
+                    label = dayFormat.format(Date(dayTransactions.first().timestampMillis)),
+                    // received - sent over the transactions shown for that day
+                    // (so it follows any active filter/search, like the rows do)
+                    net = dayTransactions.sumOf {
+                        when (it.direction) {
+                            Direction.RECEIVED -> it.amount
+                            Direction.SENT -> -it.amount
+                            else -> 0.0
+                        }
+                    }
+                )
+            }
+            items(dayTransactions) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
         }
+    }
+}
+
+@Composable
+private fun DayHeader(label: String, net: Double) {
+    val netColor = when {
+        net > 0.0 -> BrandGreen
+        net < 0.0 -> SemanticRed
+        else -> Color.Gray
+    }
+    Row(
+        // end = 28.dp lines the net up with the amount column of the rows below
+        // (16.dp row margin + 12.dp row padding).
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 28.dp, top = 12.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        Text(
+            "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = netColor
+        )
     }
 }
 

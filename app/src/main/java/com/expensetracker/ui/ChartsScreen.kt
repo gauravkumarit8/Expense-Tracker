@@ -89,6 +89,7 @@ import com.autoexpensetracker.util.DailyCheckInStore
 import com.autoexpensetracker.worker.DailyCheckInScheduler
 import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
+import com.autoexpensetracker.util.BankSourceMatcher
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
 import kotlinx.coroutines.launch
@@ -132,10 +133,15 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
 
     // Latest known balance per bank/account source — most recent transaction
     // (by timestamp) that happened to include a parsed balanceAfter value.
+    //
+    // Grouped by BankSourceMatcher.accountKey, NOT the raw sender string: the
+    // same bank arrives under different route prefixes ("JD-SLCBNK-T" vs
+    // "JK-SLCBNK-T"), which used to show one real account as two cards. The
+    // card is labelled with the sender string of the most recent message.
     val autoBalances = remember(allTransactions) {
         allTransactions
             .filter { it.balanceAfter != null }
-            .groupBy { it.bankOrSource }
+            .groupBy { BankSourceMatcher.accountKey(it.bankOrSource) }
             .mapValues { (_, txs) -> txs.maxByOrNull { it.timestampMillis }!! }
     }
 
@@ -146,15 +152,27 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
     data class BalanceEntry(val source: String, val amount: Double, val asOfMillis: Long, val isManual: Boolean)
 
     val latestBalances = remember(autoBalances, manualEntries, hiddenSources) {
-        val manualBySource = manualEntries.associateBy { it.source }
-        val autoOnly = autoBalances.keys.minus(manualBySource.keys).map { source ->
-            val tx = autoBalances.getValue(source)
-            BalanceEntry(source, tx.balanceAfter!!, tx.timestampMillis, isManual = false)
-        }
-        val manual = manualEntries.map { BalanceEntry(it.source, it.amount, it.asOfMillis, isManual = true) }
-        (autoOnly + manual)
+        // Manual entries are matched by account key too, so a correction typed
+        // under "JD-SLCBNK-T" also overrides auto-detected "JK-SLCBNK-T", and
+        // two manual cards for the same bank collapse to the most recent one.
+        // Hand-typed names ("HDFC", "CBI") aren't sender-ID-shaped, so they
+        // keep their own distinct key and never merge by accident.
+        val manualByKey = manualEntries
+            .groupBy { BankSourceMatcher.accountKey(it.source) }
+            .mapValues { (_, entries) -> entries.maxByOrNull { it.asOfMillis }!! }
+        // Hiding ("deleting") an AUTO-detected card hides every route variant
+        // of that bank. Manual cards keep the exact-source rule they always
+        // had, so adding an account by hand always shows it (upsert() un-hides
+        // that exact source).
+        val hiddenKeys = hiddenSources.map { BankSourceMatcher.accountKey(it) }.toSet()
+        val autoOnly = autoBalances
+            .filterKeys { it !in manualByKey.keys && it !in hiddenKeys }
+            .values
+            .map { tx -> BalanceEntry(tx.bankOrSource, tx.balanceAfter!!, tx.timestampMillis, isManual = false) }
+        val manual = manualByKey.values
             .filterNot { hiddenSources.contains(it.source) }
-            .sortedByDescending { it.asOfMillis }
+            .map { BalanceEntry(it.source, it.amount, it.asOfMillis, isManual = true) }
+        (autoOnly + manual).sortedByDescending { it.asOfMillis }
     }
 
     val thisMonthSpend = remember(allTransactions, startOfMonth, endOfMonth) {
@@ -268,10 +286,12 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
                 // everything actually known about the account, not just
                 // whichever source happened to produce it.
                 val history = remember(allTransactions, manualEntries, entry.source) {
+                    val key = BankSourceMatcher.accountKey(entry.source)
                     val fromTransactions = allTransactions
-                        .filter { it.bankOrSource == entry.source && it.balanceAfter != null }
+                        .filter { BankSourceMatcher.accountKey(it.bankOrSource) == key && it.balanceAfter != null }
                         .map { it.timestampMillis to it.balanceAfter!! }
-                    val fromManual = ManualBalanceStore.getHistory(context, entry.source)
+                    val fromManual = ManualBalanceStore.exportAll(context)
+                        .filter { BankSourceMatcher.accountKey(it.source) == key }
                         .map { it.asOfMillis to it.amount }
                     (fromTransactions + fromManual).sortedBy { it.first }
                 }

@@ -43,6 +43,7 @@ import com.autoexpensetracker.data.Direction
 import com.autoexpensetracker.data.Reminder
 import com.autoexpensetracker.data.ReminderDao
 import com.autoexpensetracker.data.Transaction
+import com.autoexpensetracker.ui.theme.BrandGreen
 import com.autoexpensetracker.ui.theme.SemanticGray
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.util.MonthRange
@@ -120,13 +121,19 @@ internal fun DashboardScreen(
     fun startOfDay(cal: Calendar): Long = (cal.clone() as Calendar).apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }.timeInMillis
-    fun spendOnDay(dayStartMillis: Long): Double {
+    fun totalOnDay(direction: Direction, dayStartMillis: Long): Double {
         val dayEndMillis = dayStartMillis + 24L * 60 * 60 * 1000
         return allTransactions
-            .filter { it.direction == Direction.SENT && it.timestampMillis in dayStartMillis until dayEndMillis }
+            .filter { it.direction == direction && it.timestampMillis in dayStartMillis until dayEndMillis }
             .sumOf { it.amount }
     }
+    fun spendOnDay(dayStartMillis: Long): Double = totalOnDay(Direction.SENT, dayStartMillis)
     val todaySpend = remember(allTransactions) { spendOnDay(startOfDay(Calendar.getInstance())) }
+    // The card used to show only today's SENT figure; received (and so the
+    // day's net) was only visible in the monthly hero card above it.
+    val todayReceived = remember(allTransactions) {
+        totalOnDay(Direction.RECEIVED, startOfDay(Calendar.getInstance()))
+    }
     val comparisonSpend = remember(allTransactions, comparisonPeriod) {
         val comparisonCal = Calendar.getInstance().apply {
             when (comparisonPeriod) {
@@ -216,6 +223,7 @@ internal fun DashboardScreen(
             item {
                 TodaySpendCard(
                     todaySpend = todaySpend,
+                    todayReceived = todayReceived,
                     comparisonSpend = comparisonSpend,
                     comparisonPeriod = comparisonPeriod,
                     onComparisonPeriodChange = { comparisonPeriod = it }
@@ -286,6 +294,7 @@ internal fun DashboardScreen(
 @Composable
 private fun TodaySpendCard(
     todaySpend: Double,
+    todayReceived: Double,
     comparisonSpend: Double,
     comparisonPeriod: SpendComparisonPeriod,
     onComparisonPeriodChange: (SpendComparisonPeriod) -> Unit
@@ -311,7 +320,7 @@ private fun TodaySpendCard(
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Today's spending", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+                Text("Today", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     SpendComparisonPeriod.entries.forEach { period ->
                         FilterChip(
@@ -323,14 +332,51 @@ private fun TodaySpendCard(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(formatInr(todaySpend), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(6.dp))
+            // Same sign convention as the monthly hero card: net = received - sent.
+            val todayNet = todayReceived - todaySpend
+            val netColor = when {
+                todayNet > 0.0 -> BrandGreen
+                todayNet < 0.0 -> SemanticRed
+                else -> Color.Gray
+            }
+            Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+            Text(
+                "${if (todayNet >= 0) "+" else "−"}${formatInr(kotlin.math.abs(todayNet))}",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = netColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                TodayStat(label = "Sent", amount = todaySpend, color = SemanticRed)
+                TodayStat(label = "Received", amount = todayReceived, color = BrandGreen)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            // The comparison chips and this trend line are about SPENDING
+            // (sent), not net — less spending is the "good" direction.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(trendIcon, contentDescription = null, tint = trendColor, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(trendText, style = MaterialTheme.typography.bodySmall, color = trendColor)
             }
         }
+    }
+}
+
+@Composable
+private fun TodayStat(label: String, amount: Double, color: Color) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        Text(
+            formatInr(amount),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
