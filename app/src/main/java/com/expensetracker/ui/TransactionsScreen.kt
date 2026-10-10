@@ -62,7 +62,10 @@ import com.autoexpensetracker.util.BiometricAuthHelper
 import com.autoexpensetracker.util.DismissedSuggestionsStore
 import com.autoexpensetracker.util.RecurringDetector
 import com.autoexpensetracker.util.RecurringSuggestion
+import com.autoexpensetracker.util.DayRange
 import com.autoexpensetracker.util.MonthRange
+import com.autoexpensetracker.util.MonthTotals
+import com.autoexpensetracker.util.PeriodBreakdown
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
 import com.autoexpensetracker.ads.BannerAdView
@@ -226,7 +229,7 @@ private fun MonthHeaderRow(monthLabel: String, onSeeAllMonths: () -> Unit) {
     ) {
         Text(monthLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         TextButton(onClick = onSeeAllMonths) {
-            Text("See all months")
+            Text("History")
             Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
         }
     }
@@ -401,19 +404,34 @@ internal fun MonthlyHistoryScreen(
     val scope = rememberCoroutineScope()
 
     var selectedMonth by rememberSaveable { mutableStateOf(MonthRange.current()) }
+    var selectedDay by rememberSaveable { mutableStateOf(DayRange.today()) }
+    // The user's SAVED preference for which view opens (Day / Month / Year).
+    // Same SharedPreferences pattern as before; the old two-way Month/Year
+    // toggle stored "MONTH"/"YEAR", which are still valid values.
     var period by remember { mutableStateOf(SummaryPeriodStore.get(context)) }
     var showMonthYearDialog by remember { mutableStateOf(false) }
+    var showDayDialog by remember { mutableStateOf(false) }
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
     // Same tap-to-filter as TransactionsScreen (2026-09-03) — kept
     // consistent across both screens since they share NetSummaryCard.
     var directionFilter by rememberSaveable { mutableStateOf(DirectionFilter.ALL) }
 
+    // Called ONLY when the user taps the Day/Month/Year selector, so it is
+    // the only thing that changes the saved preference. Drilling from the
+    // Year table into a month changes `period` directly, without saving —
+    // otherwise looking at one month would silently overwrite a "Year" preference.
     fun setPeriod(p: SummaryPeriod) {
         period = p
         SummaryPeriodStore.set(context, p)
     }
     fun toggleSent() { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT }
     fun toggleReceived() { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
+
+    // Step the year while keeping the month, never landing in the future.
+    fun shiftYear(delta: Int) {
+        val moved = MonthRange(selectedMonth.year + delta, selectedMonth.month)
+        selectedMonth = if (moved.isFuture()) MonthRange.current() else moved
+    }
 
     fun applyDirectionFilter(list: List<Transaction>): List<Transaction> = when (directionFilter) {
         DirectionFilter.SENT -> list.filter { it.direction == Direction.SENT }
@@ -428,66 +446,115 @@ internal fun MonthlyHistoryScreen(
     val monthTransactions = remember(monthTransactionsUnfiltered, directionFilter) {
         applyDirectionFilter(monthTransactionsUnfiltered)
     }
-    val periodTransactions = remember(allTransactions, selectedMonth, period, directionFilter) {
-        val base = when (period) {
-            SummaryPeriod.MONTH -> monthTransactionsUnfiltered
-            SummaryPeriod.YEAR -> allTransactions.filter { selectedMonth.isInSameYear(it.timestampMillis) }
-        }
-        applyDirectionFilter(base)
+    val dayTransactionsUnfiltered = remember(allTransactions, selectedDay) {
+        allTransactions.filter { selectedDay.contains(it.timestampMillis) }
+            .sortedByDescending { it.timestampMillis }
+    }
+    val dayTransactions = remember(dayTransactionsUnfiltered, directionFilter) {
+        applyDirectionFilter(dayTransactionsUnfiltered)
+    }
+    val yearBreakdown = remember(allTransactions, selectedMonth.year) {
+        PeriodBreakdown.forYear(allTransactions, selectedMonth.year)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
-                Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
-            }
-            TextButton(onClick = { showMonthYearDialog = true }) {
-                Text(selectedMonth.label(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            }
-            IconButton(
-                onClick = { selectedMonth = selectedMonth.next() },
-                enabled = !selectedMonth.isCurrentOrFuture()
-            ) {
-                Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.Center
         ) {
-            SegmentedPeriodToggle(period = period, onPeriodChange = ::setPeriod, yearLabel = selectedMonth.yearLabel())
+            SegmentedPeriodToggle(period = period, onPeriodChange = ::setPeriod)
         }
 
-        if (monthTransactionsUnfiltered.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
-            }
-        } else {
-            NetSummaryCard(
-                transactions = periodTransactions,
-                directionFilter = directionFilter,
-                onSentClick = ::toggleSent,
-                onReceivedClick = ::toggleReceived
-            )
-            if (period == SummaryPeriod.YEAR) {
-                Text(
-                    "Totals above cover all of ${selectedMonth.yearLabel()}. List below is just ${selectedMonth.label()}.",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        when (period) {
+            SummaryPeriod.DAY -> {
+                PeriodStepper(
+                    label = selectedDay.label(),
+                    previousDescription = "Previous day",
+                    nextDescription = "Next day",
+                    canGoNext = !selectedDay.isCurrentOrFuture(),
+                    onPrevious = { selectedDay = selectedDay.previous() },
+                    onNext = { selectedDay = selectedDay.next() },
+                    onLabelClick = { showDayDialog = true }
                 )
-            }
-            if (monthTransactions.isEmpty()) {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("No transactions match this filter", color = Color.Gray)
+                if (dayTransactionsUnfiltered.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No transactions on ${selectedDay.label()}", color = Color.Gray)
+                    }
+                } else {
+                    NetSummaryCard(
+                        transactions = dayTransactions,
+                        directionFilter = directionFilter,
+                        onSentClick = ::toggleSent,
+                        onReceivedClick = ::toggleReceived
+                    )
+                    if (dayTransactions.isEmpty()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text("No transactions match this filter", color = Color.Gray)
+                        }
+                    } else {
+                        Box(modifier = Modifier.weight(1f)) {
+                            // One day only, so the day header would just repeat the stepper above.
+                            TransactionList(dayTransactions, groupByDay = false, onRowClick = { selectedTransaction = it })
+                        }
+                    }
                 }
-            } else {
-                Box(modifier = Modifier.weight(1f)) {
-                    TransactionList(monthTransactions, groupByDay = true, onRowClick = { selectedTransaction = it })
+            }
+
+            SummaryPeriod.MONTH -> {
+                PeriodStepper(
+                    label = selectedMonth.label(),
+                    previousDescription = "Previous month",
+                    nextDescription = "Next month",
+                    canGoNext = !selectedMonth.isCurrentOrFuture(),
+                    onPrevious = { selectedMonth = selectedMonth.previous() },
+                    onNext = { selectedMonth = selectedMonth.next() },
+                    onLabelClick = { showMonthYearDialog = true }
+                )
+                if (monthTransactionsUnfiltered.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
+                    }
+                } else {
+                    NetSummaryCard(
+                        transactions = monthTransactions,
+                        directionFilter = directionFilter,
+                        onSentClick = ::toggleSent,
+                        onReceivedClick = ::toggleReceived
+                    )
+                    if (monthTransactions.isEmpty()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text("No transactions match this filter", color = Color.Gray)
+                        }
+                    } else {
+                        Box(modifier = Modifier.weight(1f)) {
+                            TransactionList(monthTransactions, groupByDay = true, onRowClick = { selectedTransaction = it })
+                        }
+                    }
+                }
+            }
+
+            SummaryPeriod.YEAR -> {
+                PeriodStepper(
+                    label = selectedMonth.yearLabel(),
+                    previousDescription = "Previous year",
+                    nextDescription = "Next year",
+                    canGoNext = selectedMonth.year < MonthRange.current().year,
+                    onPrevious = { shiftYear(-1) },
+                    onNext = { shiftYear(1) },
+                    onLabelClick = null
+                )
+                if (yearBreakdown.all { it.count == 0 }) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No transactions in ${selectedMonth.yearLabel()}", color = Color.Gray)
+                    }
+                } else {
+                    Box(modifier = Modifier.weight(1f)) {
+                        YearBreakdown(
+                            rows = yearBreakdown,
+                            // Drill down WITHOUT saving: see setPeriod() above.
+                            onMonthClick = { month -> selectedMonth = month; period = SummaryPeriod.MONTH }
+                        )
+                    }
                 }
             }
         }
@@ -501,6 +568,14 @@ internal fun MonthlyHistoryScreen(
         )
     }
 
+    if (showDayDialog) {
+        DayPickerDialog(
+            initial = selectedDay,
+            onDismiss = { showDayDialog = false },
+            onPick = { picked -> selectedDay = picked; showDayDialog = false }
+        )
+    }
+
     selectedTransaction?.let { tx ->
         TransactionDetailDialog(
             transaction = tx,
@@ -511,13 +586,169 @@ internal fun MonthlyHistoryScreen(
     }
 }
 
+/** Previous / label / next row shared by the Day, Month and Year views. */
 @Composable
-private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (SummaryPeriod) -> Unit, yearLabel: String) {
+private fun PeriodStepper(
+    label: String,
+    previousDescription: String,
+    nextDescription: String,
+    canGoNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onLabelClick: (() -> Unit)?
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onPrevious) {
+            Icon(Icons.Filled.ChevronLeft, contentDescription = previousDescription)
+        }
+        if (onLabelClick != null) {
+            TextButton(onClick = onLabelClick) {
+                Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            }
+        } else {
+            Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        }
+        IconButton(onClick = onNext, enabled = canGoNext) {
+            Icon(Icons.Filled.ChevronRight, contentDescription = nextDescription)
+        }
+    }
+}
+
+// ---------- YEAR BREAKDOWN ----------
+//
+// The Jan-to-Dec table: received / sent / net per month, with the year's
+// total pinned right under the column headings (so it is visible without
+// scrolling past twelve rows). Tapping a month with data opens that month.
+// Whole rupees, not paise: four money columns on a phone need the room, and
+// paise add nothing to a year-at-a-glance view. For the CURRENT year, months
+// after today are omitted rather than shown as a column of dashes.
+
+@Composable
+private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) -> Unit) {
+    val visible = remember(rows) { rows.filter { !it.month.isFuture() } }
+    val totalReceived = remember(visible) { visible.fold(0.0) { acc, r -> acc + r.received } }
+    val totalSent = remember(visible) { visible.fold(0.0) { acc, r -> acc + r.sent } }
+    val maxSent = remember(visible) { visible.map { it.sent }.maxOrNull() ?: 0.0 }
+    // Locale-based month names that don't depend on a cached date formatter's time zone.
+    val shortMonths = remember { java.text.DateFormatSymbols.getInstance(Locale.getDefault()).shortMonths }
+
+    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
+        item {
+            YearRow(
+                monthLabel = "Month", received = "Received", sent = "Sent", net = "Net",
+                receivedColor = Color.Gray, sentColor = Color.Gray, netColor = Color.Gray,
+                bold = false, muted = true, sentFraction = 0f, background = Color.Transparent
+            )
+        }
+        item {
+            val totalNet = totalReceived - totalSent
+            YearRow(
+                monthLabel = "Total",
+                received = formatInrWhole(totalReceived),
+                sent = formatInrWhole(totalSent),
+                net = signedWhole(totalNet),
+                receivedColor = BrandGreen, sentColor = SemanticRed, netColor = netColorFor(totalNet),
+                bold = true, muted = false, sentFraction = 0f, background = Color(0xFFEDEDF2)
+            )
+        }
+        items(visible) { row ->
+            val has = row.count > 0
+            Surface(onClick = { onMonthClick(row.month) }, enabled = has, color = Color.Transparent) {
+                YearRow(
+                    monthLabel = shortMonths[row.month.month],
+                    received = if (has) formatInrWhole(row.received) else "—",
+                    sent = if (has) formatInrWhole(row.sent) else "—",
+                    net = if (has) signedWhole(row.net) else "—",
+                    receivedColor = if (has) BrandGreen else Color.Gray,
+                    sentColor = if (has) SemanticRed else Color.Gray,
+                    netColor = if (has) netColorFor(row.net) else Color.Gray,
+                    bold = false, muted = !has,
+                    sentFraction = if (has && maxSent > 0.0) (row.sent / maxSent).toFloat() else 0f,
+                    background = Color.Transparent
+                )
+            }
+        }
+    }
+}
+
+private fun signedWhole(net: Double): String =
+    "${if (net >= 0) "+" else "−"}${formatInrWhole(kotlin.math.abs(net))}"
+
+private fun netColorFor(net: Double): Color = when {
+    net > 0.0 -> BrandGreen
+    net < 0.0 -> SemanticRed
+    else -> Color.Gray
+}
+
+@Composable
+private fun YearRow(
+    monthLabel: String,
+    received: String,
+    sent: String,
+    net: String,
+    receivedColor: Color,
+    sentColor: Color,
+    netColor: Color,
+    bold: Boolean,
+    muted: Boolean,
+    sentFraction: Float,
+    background: Color
+) {
+    val weight = if (bold) FontWeight.SemiBold else FontWeight.Normal
+    Column(modifier = Modifier.fillMaxWidth().background(background)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                monthLabel, modifier = Modifier.weight(0.8f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (bold || !muted) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (muted) Color.Gray else Color.Unspecified
+            )
+            YearCell(received, receivedColor, weight, Modifier.weight(1.1f))
+            YearCell(sent, sentColor, weight, Modifier.weight(1.1f))
+            YearCell(net, netColor, weight, Modifier.weight(1.1f))
+        }
+        if (sentFraction > 0f) {
+            // Thin bar: this month's spending relative to the biggest month of the year.
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth(sentFraction.coerceIn(0.02f, 1f))
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(SemanticRed.copy(alpha = 0.35f))
+            )
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE6E6EC)))
+    }
+}
+
+@Composable
+private fun YearCell(text: String, color: Color, weight: FontWeight, modifier: Modifier) {
+    Text(
+        text, modifier = modifier, color = color,
+        style = MaterialTheme.typography.bodySmall, fontWeight = weight,
+        textAlign = TextAlign.End, maxLines = 1, overflow = TextOverflow.Ellipsis
+    )
+}
+
+@Composable
+private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (SummaryPeriod) -> Unit) {
     Row(
         modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0xFFEDEDF2)).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        listOf(SummaryPeriod.MONTH to "This month", SummaryPeriod.YEAR to yearLabel).forEach { (p, label) ->
+        listOf(
+            SummaryPeriod.DAY to "Day",
+            SummaryPeriod.MONTH to "Month",
+            SummaryPeriod.YEAR to "Year"
+        ).forEach { (p, label) ->
             val selected = period == p
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -526,13 +757,40 @@ private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (Summar
             ) {
                 Text(
                     label,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                     color = if (selected) Color.Black else Color.Gray
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DayPickerDialog(initial: DayRange, onDismiss: () -> Unit, onPick: (DayRange) -> Unit) {
+    // DatePicker speaks UTC-midnight millis for the calendar date; DayRange
+    // converts both ways through UTC so the picked date is exact in every time
+    // zone (reading it with the local zone is off by a day west of UTC — the
+    // logic tests cover this).
+    val state = rememberDatePickerState(initialSelectedDateMillis = initial.toUtcPickerMillis())
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                val picked = state.selectedDateMillis
+                if (picked == null) {
+                    onDismiss()
+                } else {
+                    val day = DayRange.fromUtcPickerMillis(picked)
+                    // A future day can't have transactions; land on today instead.
+                    onPick(if (day.isFuture()) DayRange.today() else day)
+                }
+            }) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    ) {
+        DatePicker(state = state, showModeToggle = false)
     }
 }
 

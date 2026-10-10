@@ -427,7 +427,7 @@ class MainActivity : FragmentActivity() {
                                     when {
                                         isLocked -> "Expense Tracker"
                                         showSettings -> "Settings"
-                                        showMonthlyHistory -> "Monthly History"
+                                        showMonthlyHistory -> "History"
                                         showSearch -> "Search"
                                         else -> screen.label
                                     }

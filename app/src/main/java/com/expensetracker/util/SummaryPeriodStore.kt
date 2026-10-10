@@ -2,9 +2,15 @@ package com.autoexpensetracker.util
 
 import android.content.Context
 
-/** Whether `MonthlyHistoryScreen`'s totals are scoped to the selected month
- *  or to that month's containing calendar year. */
-enum class SummaryPeriod { MONTH, YEAR }
+/**
+ * Which view the history screen (`MonthlyHistoryScreen`) shows: one DAY, one
+ * MONTH, or a YEAR broken down month by month. Originally a two-way
+ * Month/Year toggle for the totals card; DAY was added with the Day/Month/Year
+ * selector. The stored strings "MONTH" and "YEAR" from that earlier toggle are
+ * still valid, so existing users' saved choice carries over (a saved "YEAR"
+ * now opens the Jan-Dec table instead of year totals over a month list).
+ */
+enum class SummaryPeriod { DAY, MONTH, YEAR }
 
 /**
  * Persists the user's Month-vs-Year summary preference on
