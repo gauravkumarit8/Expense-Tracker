@@ -12,6 +12,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,6 +38,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import com.autoexpensetracker.listener.CaptureDiagnosis
+import com.autoexpensetracker.listener.CaptureHealthStore
+import com.autoexpensetracker.listener.CaptureVerdict
+import com.autoexpensetracker.listener.OemSettings
+import com.autoexpensetracker.review.ReviewPromptStore
+import com.autoexpensetracker.util.RelativeTime
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -237,6 +245,7 @@ internal fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showCaptureStatus by remember { mutableStateOf(false) }
     var showThemePicker by remember { mutableStateOf(false) }
 
     if (showThemePicker) {
@@ -364,6 +373,15 @@ internal fun SettingsScreen(
                 onClick = onEnableNotificationAccess,
                 tint = if (notificationAccessGranted) BrandGreen else SemanticOrange
             )
+            // "Granted" above only says the PERMISSION is on. This opens a check of
+            // whether capture is actually running — see CaptureStatusDialog.
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.Info,
+                title = "Capture status & help",
+                subtitle = "Bank alerts not showing up? Check here",
+                onClick = { showCaptureStatus = true }
+            )
             // Only shown when the UMP SDK determines this user's region
             // requires an always-available way to revisit their ad-consent
             // choice (e.g. EEA/UK) — GDPR requires consent be revocable,
@@ -377,6 +395,26 @@ internal fun SettingsScreen(
                     onClick = onShowPrivacyOptions
                 )
             }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        item {
+            val context = LocalContext.current
+            Text("Support", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.Star,
+                title = "Rate on Google Play",
+                subtitle = "Enjoying the app? A rating helps other people find it",
+                onClick = { AppLinks.rate(context) }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.Share,
+                title = "Share with a friend",
+                subtitle = "Send a link to the Play Store listing",
+                onClick = { AppLinks.share(context) }
+            )
             Spacer(modifier = Modifier.height(20.dp))
         }
 
@@ -409,6 +447,14 @@ internal fun SettingsScreen(
                 BannerAdView()
             }
         }
+    }
+
+    if (showCaptureStatus) {
+        CaptureStatusDialog(
+            accessGranted = notificationAccessGranted,
+            onOpenNotificationAccess = onEnableNotificationAccess,
+            onDismiss = { showCaptureStatus = false }
+        )
     }
 
     if (showDeleteConfirm) {
@@ -655,4 +701,104 @@ internal fun ManageSubscriptionDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+}
+
+// ---------- CAPTURE STATUS ----------
+
+/**
+ * Answers "why aren't my bank messages showing up?" with evidence instead of a
+ * guess. The permission toggle alone can't: on phones whose battery manager
+ * kills background apps (Xiaomi/Redmi/POCO notably) the permission stays ON
+ * while Android quietly stops delivering notifications to the app. Shows the
+ * capture timestamps, a plain-language verdict from [CaptureDiagnosis], and the
+ * steps that normally fix it. Only timestamps and a count are read — never any
+ * message content.
+ */
+@Composable
+private fun CaptureStatusDialog(
+    accessGranted: Boolean,
+    onOpenNotificationAccess: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val now = remember { System.currentTimeMillis() }
+    val snapshot = remember { CaptureHealthStore.snapshot(context) }
+    val captured = remember { ReviewPromptStore.capturedCount(context) }
+    val xiaomi = remember { OemSettings.isXiaomiFamily() }
+    val verdict = CaptureDiagnosis.verdict(accessGranted, snapshot.connectedAt, snapshot.lastCandidateAt, snapshot.lastCapturedAt)
+
+    fun ago(millis: Long, never: String) = if (millis <= 0L) never else RelativeTime.ago(millis, now)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Capture status") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    when (verdict) {
+                        CaptureVerdict.ACCESS_OFF ->
+                            "Notification access is off, so the app can't see your bank alerts. Turn it on with the button below."
+                        CaptureVerdict.NEVER_CONNECTED ->
+                            "Access is on, but your phone has not connected the app to notifications yet. This is usually a battery or autostart setting — follow the steps below, then restart your phone."
+                        CaptureVerdict.NO_MESSAGES_YET ->
+                            "Connected and ready, but no bank or SMS notification has reached the app yet. Make a small UPI payment, then check back here."
+                        CaptureVerdict.MESSAGES_NOT_RECOGNISED ->
+                            "Messages are reaching the app, but none has been recognised as a transaction yet. Your bank's message wording may not be supported — please tell us which bank."
+                        CaptureVerdict.WORKING ->
+                            "Working. Last transaction captured ${ago(snapshot.lastCapturedAt, "just now")}."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                CaptureStatusLine("Notification access", if (accessGranted) "On" else "Off")
+                CaptureStatusLine("Connected to notifications", ago(snapshot.connectedAt, "not yet"))
+                CaptureStatusLine("Last bank / SMS notification seen", ago(snapshot.lastCandidateAt, "none yet"))
+                CaptureStatusLine("Last transaction captured", ago(snapshot.lastCapturedAt, "none yet"))
+                CaptureStatusLine("Captured automatically so far", captured.toString())
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    if (xiaomi) "On Xiaomi / Redmi / POCO phones" else "If capture keeps stopping",
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    if (xiaomi) {
+                        "1. Turn on Autostart for Expense Tracker.\n" +
+                            "2. In its App info, set Battery saver to No restrictions.\n" +
+                            "3. On HyperOS, also allow Background autostart under its permissions.\n" +
+                            "4. Open Recents, long-press the app card and lock it, so swiping it away doesn't stop capture.\n" +
+                            "Menu names vary by version."
+                    } else {
+                        "1. In App info, set battery usage to Unrestricted for Expense Tracker.\n" +
+                            "2. Don't force-stop the app."
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Installed from an APK file rather than Google Play? Android may block notification access. In App info tap the ⋮ menu → Allow restricted settings, then switch notification access on again.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = onOpenNotificationAccess) { Text("Open notification access") }
+                TextButton(onClick = { OemSettings.openAppDetails(context) }) { Text("Open app settings (battery)") }
+                if (xiaomi) {
+                    TextButton(onClick = { OemSettings.openXiaomiAutostart(context) }) { Text("Open Xiaomi Autostart") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+private fun CaptureStatusLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+    }
 }

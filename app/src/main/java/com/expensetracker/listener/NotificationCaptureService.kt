@@ -1,11 +1,13 @@
 package com.autoexpensetracker.listener
 
 import android.content.ComponentName
+import android.os.Bundle
 import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.autoexpensetracker.BuildConfig
 import com.autoexpensetracker.worker.TransactionIngestor
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Primary transaction-capture path (see REQUIREMENTS.md Architecture ยง1).
@@ -77,20 +79,23 @@ class NotificationCaptureService : NotificationListenerService() {
         "com.citi.citimobile"
     )
 
-    // Indian bank/UPI SMS sender IDs are DLT-registered "headers": 6
-    // alphanumeric characters, optionally prefixed with a 2-letter telecom
-    // code and hyphen (e.g. "HDFCBK", "VM-HDFCBK", "AD-SBIINB", "JD-ICICIB").
-    // Real contact names or app titles essentially never match this shape
-    // (they have spaces, lowercase letters, punctuation), so this is a safe
-    // way to recognize "this looks like a bank/SMS alert" from a package we
-    // don't otherwise know about, without having to hardcode every bank.
-    private val senderIdShape = Regex("^(?:[A-Z]{2}-)?[A-Z0-9]{6}\$")
+    // Whether a title looks like a bank/UPI SMS sender ID is decided by
+    // SenderShape (tested off-device). The old inline pattern here had no
+    // optional "-T"/"-S" traffic suffix, so the most common real form of a
+    // sender ID — "JD-SLCBNK-T", "CP-HDFCBN-S" — failed it.
+
+    // Newest message time already handled per notification, so an update of a
+    // conversation notification doesn't re-process its whole history.
+    private val lastSeenMessageTime = ConcurrentHashMap<String, Long>()
+
+    private var lastDefaultSmsRefreshMillis = 0L
 
     private var cachedDefaultSmsPackage: String? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         refreshDefaultSmsPackage()
+        CaptureHealthStore.recordConnected(applicationContext)
     }
 
     // NotificationListenerService connections can be dropped by the OS
@@ -103,10 +108,17 @@ class NotificationCaptureService : NotificationListenerService() {
         if (BuildConfig.DEBUG) {
             android.util.Log.w("ExpenseTrackerDEBUG", "Notification listener disconnected — requesting rebind")
         }
+        CaptureHealthStore.recordDisconnected(applicationContext)
         requestRebind(ComponentName(applicationContext, NotificationCaptureService::class.java))
     }
 
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        super.onNotificationRemoved(sbn)
+        lastSeenMessageTime.remove(sbn.key)
+    }
+
     private fun refreshDefaultSmsPackage() {
+        lastDefaultSmsRefreshMillis = System.currentTimeMillis()
         cachedDefaultSmsPackage = try {
             Telephony.Sms.getDefaultSmsPackage(applicationContext)
         } catch (e: Exception) {
@@ -116,6 +128,16 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val pkg = sbn.packageName
+
+        // The default SMS app was only looked up when the listener connected,
+        // so changing it afterwards (e.g. Google Messages -> the phone's own
+        // Messages app) left the old value cached until the next reconnect and
+        // the new app's notifications were ignored. Re-check at most every 10
+        // minutes — often enough to notice a change, rare enough to stay cheap
+        // given every notification from every app passes through here.
+        if (cachedDefaultSmsPackage == null || System.currentTimeMillis() - lastDefaultSmsRefreshMillis > 10 * 60 * 1000L) {
+            refreshDefaultSmsPackage()
+        }
 
         val extras = sbn.notification.extras
         val title = extras.getCharSequence("android.title")?.toString().orEmpty()
@@ -147,19 +169,44 @@ class NotificationCaptureService : NotificationListenerService() {
         // as real transactions.
         val isKnownFinancePackage = knownFinancePackagePrefixes.any { pkg == it }
         val isDefaultSmsApp = cachedDefaultSmsPackage != null && pkg == cachedDefaultSmsPackage
-        val looksLikeBankSender = senderIdShape.matches(title.trim())
+        val looksLikeBankSender = SenderShape.looksLikeBankSender(title)
 
         if (!isKnownFinancePackage && !isDefaultSmsApp && !looksLikeBankSender) return
 
         val senderForMatching = title.ifBlank { pkg }
 
-        // Process each bundled line as its own candidate transaction so a
-        // burst of SMS doesn't collapse into one capture; fall back to
-        // bigText, then plain text, when there's no bundling.
-        val candidateTexts = if (textLines.isNotEmpty()) textLines else listOf(bigText.ifBlank { plainText })
+        // Which message lines to treat as candidate transactions, each with its
+        // own timestamp:
+        //  1. MessagingStyle conversations (Google Messages and most other SMS
+        //     apps): the notification carries the conversation's recent
+        //     messages in "android.messages". "android.textLines" is only for
+        //     InboxStyle, so the earlier comment claiming it covered
+        //     MessagingStyle was wrong — a burst of SMS lost all but the last
+        //     one, and "3 new messages" summaries were parsed as content.
+        //  2. InboxStyle lines.
+        //  3. The expanded text, then the plain text.
+        // NotificationLines drops blanks and "N new messages" headers in every
+        // case, and (for 1) skips messages already handled for this notification.
+        val messagingLines = readMessagingLines(extras)
+        val candidates: List<NotifLine> = when {
+            messagingLines.isNotEmpty() -> {
+                val fresh = NotificationLines.selectNew(messagingLines, lastSeenMessageTime[sbn.key], sbn.postTime)
+                NotificationLines.newestTime(messagingLines)?.let {
+                    if (lastSeenMessageTime.size > 200) lastSeenMessageTime.clear()
+                    lastSeenMessageTime[sbn.key] = it
+                }
+                fresh
+            }
+            textLines.isNotEmpty() ->
+                NotificationLines.selectNew(textLines.map { NotifLine(it, 0L) }, null, sbn.postTime)
+            else ->
+                NotificationLines.selectNew(listOf(NotifLine(bigText.ifBlank { plainText }, 0L)), null, sbn.postTime)
+        }
 
-        for (text in candidateTexts) {
-            if (text.isBlank()) continue
+        if (candidates.isNotEmpty()) CaptureHealthStore.recordCandidate(applicationContext)
+
+        for (line in candidates) {
+            val text = line.text
             val combined = "$title $text"
 
             if (BuildConfig.DEBUG) {
@@ -182,7 +229,29 @@ class NotificationCaptureService : NotificationListenerService() {
             // digits, balances, names) on disk unencrypted. The callback
             // itself returns immediately; nothing here blocks the main
             // thread.
-            TransactionIngestor.enqueue(applicationContext, senderForMatching, combined, sbn.postTime)
+            TransactionIngestor.enqueue(applicationContext, senderForMatching, combined, line.timeMillis)
         }
+    }
+
+    /**
+     * The recent messages of a MessagingStyle notification, oldest first as the
+     * app supplied them. Returns an empty list if the extra is absent or in a
+     * shape we don't recognise, in which case the caller falls back to the plain
+     * text — so this can only ever ADD coverage, never remove it.
+     */
+    private fun readMessagingLines(extras: Bundle): List<NotifLine> {
+        val raw = try {
+            extras.getParcelableArray("android.messages")
+        } catch (e: Exception) {
+            null
+        }
+        if (raw == null) return emptyList()
+        val lines = ArrayList<NotifLine>()
+        for (item in raw) {
+            val bundle = item as? Bundle ?: continue
+            val text = bundle.getCharSequence("text")?.toString() ?: continue
+            lines.add(NotifLine(text, bundle.getLong("time", 0L)))
+        }
+        return lines
     }
 }
