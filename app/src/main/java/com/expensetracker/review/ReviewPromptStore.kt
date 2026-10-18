@@ -1,7 +1,6 @@
 package com.autoexpensetracker.review
 
 import android.content.Context
-import java.util.concurrent.TimeUnit
 
 /**
  * Decides *whether* to ask for a review — the actual Play In-App Review
@@ -27,15 +26,9 @@ object ReviewPromptStore {
     private const val KEY_LAST_PROMPT_MILLIS = "last_prompt_millis"
     private const val KEY_PROMPT_COUNT = "prompt_count"
 
-    // First ask only after this many transactions have been captured
-    // *automatically* (manual cash entries don't count — they're not
-    // evidence the core notification-capture feature actually worked).
-    private const val MIN_CAPTURED_TRANSACTIONS = 10
-
-    // Don't ask again for 90 days after a prompt, and cap it at 3 asks
-    // ever, regardless of how long someone keeps using the app.
-    private val MIN_INTERVAL_MILLIS = TimeUnit.DAYS.toMillis(90)
-    private const val MAX_PROMPTS_EVER = 3
+    // The thresholds (5 auto-captured transactions, 90 days apart, 3 asks
+    // ever) live in ReviewPolicy, which has no Android dependencies so they
+    // can be tested off-device.
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -48,16 +41,17 @@ object ReviewPromptStore {
         p.edit().putInt(KEY_CAPTURED_COUNT, count).apply()
     }
 
+    /** Auto-captured transactions counted so far (shown on the capture-status screen). */
+    fun capturedCount(context: Context): Int = prefs(context).getInt(KEY_CAPTURED_COUNT, 0)
+
     fun isEligibleForPrompt(context: Context): Boolean {
         val p = prefs(context)
-        val capturedCount = p.getInt(KEY_CAPTURED_COUNT, 0)
-        val promptCount = p.getInt(KEY_PROMPT_COUNT, 0)
-        val lastPrompt = p.getLong(KEY_LAST_PROMPT_MILLIS, 0L)
-
-        if (capturedCount < MIN_CAPTURED_TRANSACTIONS) return false
-        if (promptCount >= MAX_PROMPTS_EVER) return false
-        if (lastPrompt != 0L && System.currentTimeMillis() - lastPrompt < MIN_INTERVAL_MILLIS) return false
-        return true
+        return ReviewPolicy.isEligible(
+            capturedCount = p.getInt(KEY_CAPTURED_COUNT, 0),
+            promptCount = p.getInt(KEY_PROMPT_COUNT, 0),
+            lastPromptMillis = p.getLong(KEY_LAST_PROMPT_MILLIS, 0L),
+            nowMillis = System.currentTimeMillis()
+        )
     }
 
     /** Call after launching (or attempting to launch) the review flow,

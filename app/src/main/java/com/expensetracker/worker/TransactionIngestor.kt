@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.autoexpensetracker.BuildConfig
 import com.autoexpensetracker.data.AppDatabase
+import com.autoexpensetracker.listener.CaptureHealthStore
 import com.autoexpensetracker.data.InsertOutcome
 import com.autoexpensetracker.parser.TransactionParser
 import com.autoexpensetracker.review.ReviewPromptStore
@@ -63,6 +64,21 @@ object TransactionIngestor {
         }
     }
 
+    /**
+     * Runs an optional post-insert step, logging (debug builds only) and
+     * swallowing any failure other than cancellation. `inline`, so the suspend
+     * calls inside the block still run in the caller's coroutine.
+     */
+    private inline fun runExtra(label: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Post-insert step '$label' failed (ignored)", e)
+        }
+    }
+
     /** Parse + dedup + insert. Throws on unexpected failure so callers can retry. */
     suspend fun ingest(context: Context, sender: String, text: String, timestampMillis: Long) {
         val appContext = context.applicationContext
@@ -78,22 +94,38 @@ object TransactionIngestor {
             is InsertOutcome.Inserted -> {
                 if (outcome.id > 0) {
                     val inserted = transaction.copy(id = outcome.id)
-                    UnusualSpendDetector.checkAndNotify(appContext, dao, inserted)
-                    BudgetWarningDetector.checkAndNotify(appContext, dao, AppDatabase.getInstance(appContext).budgetDao(), inserted)
-                    // Only act on an alert that's actually ABOUT this new
-                    // transaction (detect() re-scans everything every time,
-                    // so most calls return alerts for merchants unrelated
-                    // to what was just inserted).
-                    SubscriptionPriceChangeDetector.detect(dao.getAllOnce())
-                        .firstOrNull { it.newTransactionId == inserted.id }
-                        ?.let { alert ->
-                            if (!PriceChangeStore.isHandled(appContext, alert.merchant, alert.newAmount)) {
-                                PriceChangeStore.markHandled(appContext, alert.merchant, alert.newAmount)
-                                PriceChangeNotificationHelper.show(appContext, alert)
-                            }
-                        }
+
+                    // Core bookkeeping FIRST. These used to run after three
+                    // notification detectors with no isolation, so an exception
+                    // in any of them silently skipped the review counter (and
+                    // the widget refresh) for that transaction — and the retry
+                    // in enqueue() could not recover it, because on retry the
+                    // transaction is already stored and is skipped as a duplicate.
+                    CaptureHealthStore.recordCaptured(appContext)
                     ReviewPromptStore.recordCapturedTransaction(appContext)
-                    WidgetRefresher.refresh(appContext)
+
+                    // Everything below is a nice-to-have. Each step is isolated,
+                    // so one failing can't stop the others or lose the bookkeeping above.
+                    runExtra("unusual-spend alert") {
+                        UnusualSpendDetector.checkAndNotify(appContext, dao, inserted)
+                    }
+                    runExtra("budget warning") {
+                        BudgetWarningDetector.checkAndNotify(appContext, dao, AppDatabase.getInstance(appContext).budgetDao(), inserted)
+                    }
+                    // Only act on an alert that's actually ABOUT this new
+                    // transaction (detect() re-scans everything every time, so
+                    // most calls return alerts for unrelated merchants).
+                    runExtra("price-change alert") {
+                        SubscriptionPriceChangeDetector.detect(dao.getAllOnce())
+                            .firstOrNull { it.newTransactionId == inserted.id }
+                            ?.let { alert ->
+                                if (!PriceChangeStore.isHandled(appContext, alert.merchant, alert.newAmount)) {
+                                    PriceChangeStore.markHandled(appContext, alert.merchant, alert.newAmount)
+                                    PriceChangeNotificationHelper.show(appContext, alert)
+                                }
+                            }
+                    }
+                    runExtra("widget refresh") { WidgetRefresher.refresh(appContext) }
                 }
             }
             is InsertOutcome.ExactDuplicateSkipped -> {

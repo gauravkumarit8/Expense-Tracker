@@ -216,19 +216,24 @@ class MainActivity : FragmentActivity() {
                     appUpdateHelper.checkForUpdate(updateFlowLauncher, onUpdateAvailable = { showUpdateBanner = true })
                 }
 
-                // Ask for a review at most once per app open, only once
-                // ReviewPromptStore's criteria are met (real auto-captured
-                // usage, respecting a cooldown and a lifetime cap — see
-                // that file for the policy). Deliberately not tied to any
-                // particular screen or action — asking right after a
-                // "moment of delight" (e.g. right after a capture) would be
-                // better, but that moment happens in a background
-                // WorkManager job with no Activity to launch the flow from,
-                // so the next app open is the earliest safe opportunity.
-                LaunchedEffect(Unit) {
-                    if (ReviewPromptStore.isEligibleForPrompt(context)) {
-                        ReviewHelper.maybeRequestReview(this@MainActivity)
+                // Ask for a review once ReviewPolicy's criteria are met (5 real
+                // auto-captured transactions, then a 90-day cooldown and a
+                // lifetime cap — see ReviewPolicy / ReviewPromptStore).
+                //
+                // Checked every time the app comes to the FOREGROUND, not only
+                // when the Activity is first created. It used to be a
+                // LaunchedEffect(Unit), which runs once per Activity creation:
+                // transactions captured while the app sat in the background
+                // were never noticed on a plain resume, so the prompt could be
+                // postponed indefinitely for anyone who rarely kills the app.
+                // Held back while the app lock screen is showing, so the Play
+                // dialog never appears over the lock. ReviewHelper limits this to one
+                // attempt per process, so resuming repeatedly can't spam it.
+                LifecycleStartEffect(appLockEnabled, isUnlocked) {
+                    if (!appLockEnabled || isUnlocked) {
+                        ReviewHelper.requestIfEligible(this@MainActivity)
                     }
+                    onStopOrDispose { }
                 }
 
                 /** Runs [action] immediately if Pro, otherwise shows the

@@ -30,7 +30,7 @@ private const val TAG = "BannerAdView"
  * whether real inventory is currently filling), pass
  * "ca-app-pub-3940256099942544/6300978111" explicitly at the call site.
  */
-private const val DEFAULT_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/9782274174"
+private const val DEFAULT_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/2481170515"
 
 /**
  * A standard banner ad. Renders nothing (zero height, no placeholder box)
