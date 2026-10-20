@@ -19,7 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.autoexpensetracker.util.RecentSearchStore
+import com.autoexpensetracker.util.SearchLogic
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -254,6 +260,9 @@ internal fun SearchReviewScreen(
     allTransactions: List<Transaction>
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var directionFilter by rememberSaveable { mutableStateOf(DirectionFilter.ALL) }
@@ -265,6 +274,27 @@ internal fun SearchReviewScreen(
     var showDateRangeDialog by remember { mutableStateOf(false) }
     var showFilterSheet by remember { mutableStateOf(false) }
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+    // "Browse all transactions" from the idle state: shows the whole list
+    // even with no query and no filter.
+    var browseAll by rememberSaveable { mutableStateOf(false) }
+    var recentSearches by remember { mutableStateOf(RecentSearchStore.getAll(context)) }
+
+    // Opens with the keyboard up - the screen exists to be typed into. Only
+    // once there are transactions: with none, the search field isn't on screen
+    // and requestFocus() would throw because the requester has no target.
+    val hasTransactions = allTransactions.isNotEmpty()
+    LaunchedEffect(hasTransactions) {
+        if (hasTransactions) {
+            runCatching { focusRequester.requestFocus() }
+            keyboard?.show()
+        }
+    }
+
+    fun rememberCurrentQuery() {
+        if (SearchLogic.normalizeQuery(searchQuery).length >= 2) {
+            recentSearches = RecentSearchStore.add(context, searchQuery)
+        }
+    }
 
     val activeFilterCount = (if (directionFilter != DirectionFilter.ALL) 1 else 0) +
         (if (dateFilter != DateFilter.ALL_TIME) 1 else 0) +
@@ -286,6 +316,17 @@ internal fun SearchReviewScreen(
     fun clearAllFilters() { clearDirection(); clearDate(); clearCategory() }
 
     val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
+    val isIdle = searchQuery.isBlank() && activeFilterCount == 0 && !browseAll
+    // Biggest spend categories this month, offered as quick filters.
+    val topCategories = remember(allTransactions) {
+        val month = MonthRange.current()
+        SearchLogic.topCategoryNames(
+            allTransactions
+                .filter { it.direction == Direction.SENT && month.contains(it.timestampMillis) }
+                .map { it.category to it.amount },
+            3
+        ).mapNotNull { Category.fromNameOrNull(it) }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (needsReviewCount > 0 && directionFilter != DirectionFilter.NEEDS_REVIEW) {
@@ -295,8 +336,30 @@ internal fun SearchReviewScreen(
         if (allTransactions.isEmpty()) {
             EmptyState(showHint = false)
         } else {
-            SearchBar(searchQuery) { searchQuery = it }
+            SearchBar(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                focusRequester = focusRequester,
+                onSearch = { rememberCurrentQuery(); keyboard?.hide() }
+            )
 
+            if (isIdle) {
+                SearchIdleState(
+                    recent = recentSearches,
+                    topCategories = topCategories,
+                    totalCount = allTransactions.size,
+                    onRecentClick = { searchQuery = it },
+                    onRemoveRecent = { recentSearches = RecentSearchStore.remove(context, it) },
+                    onClearRecent = { RecentSearchStore.clearAll(context); recentSearches = emptyList() },
+                    onQuickSent = { directionFilter = DirectionFilter.SENT },
+                    onQuickReceived = { directionFilter = DirectionFilter.RECEIVED },
+                    onQuickToday = { dateFilter = DateFilter.TODAY },
+                    onQuickWeek = { dateFilter = DateFilter.THIS_WEEK },
+                    onQuickMonth = { dateFilter = DateFilter.THIS_MONTH },
+                    onQuickCategory = { categoryFilter = it },
+                    onBrowseAll = { browseAll = true }
+                )
+            } else {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -322,13 +385,24 @@ internal fun SearchReviewScreen(
             if (filtered.isEmpty()) {
                 NoResultsState()
             } else {
+                Text(
+                    if (filtered.size == 1) "1 result" else "${filtered.size} results",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MutedText,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                )
                 SummaryHeader(
                     transactions = filtered,
                     directionFilter = directionFilter,
                     onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
                     onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
                 )
-                TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
+                TransactionList(
+                    filtered,
+                    groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST,
+                    onRowClick = { rememberCurrentQuery(); selectedTransaction = it }
+                )
+            }
             }
         }
     }
@@ -851,12 +925,18 @@ private fun filterTransactions(
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }.timeInMillis
 
+    val q = query.trim()
+    // "340", "₹340", "Rs. 1,500", "1,50,000" also search by EXACT amount.
+    val amountQuery = SearchLogic.parseAmountQuery(q)
+
     return transactions.filter { tx ->
-        val matchesQuery = query.isBlank() ||
-            (tx.merchantOrContact?.contains(query, ignoreCase = true) == true) ||
-            tx.bankOrSource.contains(query, ignoreCase = true) ||
-            (tx.note?.contains(query, ignoreCase = true) == true) ||
-            (tx.tags?.contains(query, ignoreCase = true) == true)
+        val matchesQuery = q.isEmpty() ||
+            (tx.merchantOrContact?.contains(q, ignoreCase = true) == true) ||
+            tx.bankOrSource.contains(q, ignoreCase = true) ||
+            (tx.note?.contains(q, ignoreCase = true) == true) ||
+            (tx.tags?.contains(q, ignoreCase = true) == true) ||
+            (amountQuery != null && SearchLogic.amountMatches(tx.amount, amountQuery)) ||
+            SearchLogic.categoryMatches(q, tx.category, Category.fromNameOrNull(tx.category)?.label)
 
         val matchesDirection = when (direction) {
             DirectionFilter.ALL -> true
@@ -883,18 +963,24 @@ private fun filterTransactions(
 }
 
 @Composable
-private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
+private fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    focusRequester: FocusRequester,
+    onSearch: () -> Unit
+) {
     OutlinedTextField(
         value = query, onValueChange = onQueryChange,
-        placeholder = { Text("Search merchant, bank, note, tag") },
+        placeholder = { Text("Merchant, category, note, amount") },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, contentDescription = "Clear search") }
         },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focusRequester)
     )
 }
 

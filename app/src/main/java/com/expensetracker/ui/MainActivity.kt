@@ -624,6 +624,7 @@ class MainActivity : FragmentActivity() {
                                         com.autoexpensetracker.util.DismissedSuggestionsStore.clearAll(context)
                                         com.autoexpensetracker.util.BudgetWarningStore.clearAll(context)
                                         com.autoexpensetracker.util.PriceChangeStore.clearAll(context)
+                                        com.autoexpensetracker.util.RecentSearchStore.clearAll(context)
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
                                 },

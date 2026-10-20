@@ -1,0 +1,498 @@
+diff --git a/REQUIREMENTS.md b/REQUIREMENTS.md
+index 482b2f4..425e7c5 100644
+--- a/REQUIREMENTS.md
++++ b/REQUIREMENTS.md
+@@ -1023,6 +1023,7 @@ access + a validation step server-side.
+ | 2026-10-20 | Theme-aware colours across Home, Transactions, Budgets, Reminders, Settings, Charts and Onboarding: new `MutedText` (onSurface at 60%) replaces all hardcoded `Color.Gray`; `Color.White` card surfaces now use `colorScheme.surface`; pastel fills (`#FFF3E0`, `#E8F5E9`, `#FFEBEE`, `#EDE7F6`, `#E3F2FD`) became 12% tints of the semantic colours; the `#E0E0E0`/`#EDEDF2` bar tracks and dividers are faint onSurface tints; `netColorFor` became `@Composable`. Left as is: the white dot on the balance-history line, the "BEST VALUE" label, the amber `#F57C00` and the category palette. | Light, Dark and AMOLED themes are offered, but white cards and pastel fills ignored them. A scripted check (tree-sitter) confirmed no theme read sits in a non-composable function or a Canvas/remember/LaunchedEffect lambda. **Unverified:** no compile and no screenshots; contrast in Dark and AMOLED has not been looked at on a device. |
+ | 2026-10-20 | Home and navigation: removed the Charts / Budgets / Reminders chips (same three destinations as the bottom bar), made "Recent activity" rows open the Transactions tab (they had `onClick = {}`), gave Budgets a wallet icon (Charts keeps the bar-chart icon) and raised nav labels from 10sp to 11sp. | The chips duplicated the nav bar and pushed content down; a row that looks tappable and does nothing reads as broken. Rows go to the list rather than a detail sheet because the detail dialog is private to `TransactionsScreen`. **Unverified:** no compile and no device run. |
+ | 2026-10-20 | Moving history to a new phone: the CSV written by "Export to CSV" can now be imported back. "Import bank statement" became "Import transactions (CSV)"; the file's header decides the path - this app's own export goes to the new `OwnCsv` / `OwnCsvImporter` (every column restored: merchant, category, note, tags, balance, needs-review, direction), anything else to `StatementImporter` exactly as before. Import is additive and skips rows already present, matched by account (via `BankSourceMatcher`), second, amount in paise and direction, with multiplicity counted - so importing twice, or on the phone the file came from, adds nothing, while two real same-amount payments in the same second both survive. `CsvExporter` now writes with a fixed US locale and appends a `Timestamp (ms)` column (exact time, safe across a time-zone change); older exports without it still import using Date + Time. Dialog and Settings text updated; the Restore confirmation now says it also replaces whatever the new phone has captured and points to CSV import for an add-only route. | The old CSV was documented as "not meant to be re-imported", and `StatementImporter` could not read it (no debit/credit or amount+type columns, and it splits on lines so a note with a line break breaks it); even if it could, its same-calendar-day amount check would have dropped genuine repeat payments. The JSON Backup & Restore already moves everything, but it deletes all current data first, which wipes anything a new phone captured before the restore. `OwnCsv` (parser, quoted multi-line fields, formula-guard undo, number/date/digit tolerance, dedupe key and plan) was compiled and run with a real `kotlinc` against the real `CsvExporter` output - 63 checks - and mutation-checked (7 mutants, all caught). Not covered by those tests: `OwnCsvImporter` (needs the Room DAO), the dialog and the launcher wiring - no compile and no device run. Limits: without the `Timestamp (ms)` column (older exports) times are read in the new phone's time zone; a file re-saved by a spreadsheet may lose that column's precision (falls back to Date + Time). Import is still Pro-gated like the other two, so a free user cannot move their history - a product decision left unchanged. |
++| 2026-10-20 | Search redesign (approved in the 2026-10-12 brief): the field is focused with the keyboard up on open. With no query and no filter the screen shows an idle state (`SearchIdleState`): the existing Needs-review banner, recent searches (on-device `RecentSearchStore`, newest first, capped at 8, de-duplicated ignoring case, each removable, clearable, wiped by Delete all data), quick-filter chips (Sent, Received, Today, This week, This month and the 3 biggest spend categories this month) and "Browse all transactions". Once a query or filter is active it shows a result count above the existing totals. Matching now also covers category (display label or enum name, at least 2 characters) and EXACT amount - `340`, `₹340`, `Rs. 1,500`, `1,50,000`, `99.50` - while malformed grouping (`1,2,3`, `12,34`) is just text. Text matching is trimmed. Rules live in `SearchLogic`. | Opening Search used to drop the user into every transaction ever captured, which is what Transactions/History are for. "Contains" on amounts would make 340 find 1340 and 3400, hence exact. `SearchLogic` was compiled and run with a real `kotlinc` - 61 checks - and mutation-checked (6 mutants: 5 caught; the 6th removed a redundant `^` that `matchEntire` already enforces, so it does not change behaviour). A recent search is saved on the keyboard Search action and when a result is opened; the keyboard-focus call is guarded because it throws if the field is not on screen (no transactions yet). **Unverified:** the Compose screen (no compile, no device). Recent searches are not in the backup file, by design. |
+ 
+ ---
+ 
+diff --git a/app/src/main/java/com/expensetracker/ui/MainActivity.kt b/app/src/main/java/com/expensetracker/ui/MainActivity.kt
+index dc3824e..1e372db 100644
+--- a/app/src/main/java/com/expensetracker/ui/MainActivity.kt
++++ b/app/src/main/java/com/expensetracker/ui/MainActivity.kt
+@@ -624,6 +624,7 @@ class MainActivity : FragmentActivity() {
+                                         com.autoexpensetracker.util.DismissedSuggestionsStore.clearAll(context)
+                                         com.autoexpensetracker.util.BudgetWarningStore.clearAll(context)
+                                         com.autoexpensetracker.util.PriceChangeStore.clearAll(context)
++                                        com.autoexpensetracker.util.RecentSearchStore.clearAll(context)
+                                         snackbarHostState.showSnackbar("All data deleted")
+                                     }
+                                 },
+diff --git a/app/src/main/java/com/expensetracker/ui/SearchIdleState.kt b/app/src/main/java/com/expensetracker/ui/SearchIdleState.kt
+new file mode 100644
+index 0000000..4cf52a1
+--- /dev/null
++++ b/app/src/main/java/com/expensetracker/ui/SearchIdleState.kt
+@@ -0,0 +1,134 @@
++@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
++
++package com.autoexpensetracker.ui
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.FlowRow
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.filled.Close
++import androidx.compose.material.icons.filled.History
++import androidx.compose.material3.FilterChip
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.unit.dp
++import com.autoexpensetracker.data.Category
++import com.autoexpensetracker.ui.theme.MutedText
++
++/**
++ * What the Search screen shows before anything is typed or filtered: recent
++ * searches, one-tap quick filters, and a way into the full list. Without
++ * this, opening Search used to drop the user straight into every
++ * transaction ever captured, which is Transactions/History's job.
++ *
++ * Callback-only on purpose - the filter state lives in SearchReviewScreen.
++ */
++@Composable
++internal fun SearchIdleState(
++    recent: List<String>,
++    topCategories: List<Category>,
++    totalCount: Int,
++    onRecentClick: (String) -> Unit,
++    onRemoveRecent: (String) -> Unit,
++    onClearRecent: () -> Unit,
++    onQuickSent: () -> Unit,
++    onQuickReceived: () -> Unit,
++    onQuickToday: () -> Unit,
++    onQuickWeek: () -> Unit,
++    onQuickMonth: () -> Unit,
++    onQuickCategory: (Category) -> Unit,
++    onBrowseAll: () -> Unit
++) {
++    Column(
++        modifier = Modifier
++            .fillMaxWidth()
++            .verticalScroll(rememberScrollState())
++            .padding(horizontal = 16.dp, vertical = 8.dp)
++    ) {
++        if (recent.isNotEmpty()) {
++            Row(
++                modifier = Modifier.fillMaxWidth(),
++                horizontalArrangement = Arrangement.SpaceBetween,
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                Text("Recent searches", style = MaterialTheme.typography.titleSmall)
++                TextButton(onClick = onClearRecent) { Text("Clear") }
++            }
++            recent.forEach { query ->
++                Surface(
++                    modifier = Modifier.fillMaxWidth(),
++                    color = MaterialTheme.colorScheme.surface,
++                    onClick = { onRecentClick(query) }
++                ) {
++                    Row(
++                        modifier = Modifier.padding(start = 4.dp),
++                        verticalAlignment = Alignment.CenterVertically
++                    ) {
++                        Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(18.dp), tint = MutedText)
++                        Text(
++                            query,
++                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 12.dp),
++                            style = MaterialTheme.typography.bodyMedium,
++                            maxLines = 1
++                        )
++                        IconButton(onClick = { onRemoveRecent(query) }) {
++                            Icon(Icons.Filled.Close, contentDescription = "Remove $query from recent searches", modifier = Modifier.size(18.dp), tint = MutedText)
++                        }
++                    }
++                }
++            }
++            Spacer(modifier = Modifier.height(16.dp))
++        }
++
++        Text("Quick filters", style = MaterialTheme.typography.titleSmall)
++        Spacer(modifier = Modifier.height(8.dp))
++        FlowRow(
++            horizontalArrangement = Arrangement.spacedBy(8.dp),
++            verticalArrangement = Arrangement.spacedBy(4.dp)
++        ) {
++            QuickChip("Sent", onQuickSent)
++            QuickChip("Received", onQuickReceived)
++            QuickChip("Today", onQuickToday)
++            QuickChip("This week", onQuickWeek)
++            QuickChip("This month", onQuickMonth)
++            topCategories.forEach { category ->
++                QuickChip("${category.emoji} ${category.label}") { onQuickCategory(category) }
++            }
++        }
++        if (topCategories.isNotEmpty()) {
++            Text("Categories shown are your biggest spends this month.", style = MaterialTheme.typography.bodySmall, color = MutedText)
++        }
++
++        Spacer(modifier = Modifier.height(20.dp))
++        Text(
++            "You can also type an amount (340, ₹1,500) to find exact matches, or a category name.",
++            style = MaterialTheme.typography.bodySmall,
++            color = MutedText
++        )
++        Spacer(modifier = Modifier.height(12.dp))
++        OutlinedButton(onClick = onBrowseAll, modifier = Modifier.fillMaxWidth()) {
++            Text("Browse all transactions ($totalCount)")
++        }
++    }
++}
++
++@Composable
++private fun QuickChip(label: String, onClick: () -> Unit) {
++    FilterChip(selected = false, onClick = onClick, label = { Text(label) })
++}
+diff --git a/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt b/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt
+index ceda701..5b12b93 100644
+--- a/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt
+@@ -19,7 +19,13 @@ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.shape.CircleShape
+ import androidx.compose.foundation.BorderStroke
+ import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.foundation.text.KeyboardActions
+ import androidx.compose.foundation.text.KeyboardOptions
++import androidx.compose.ui.focus.FocusRequester
++import androidx.compose.ui.focus.focusRequester
++import androidx.compose.ui.platform.LocalSoftwareKeyboardController
++import com.autoexpensetracker.util.RecentSearchStore
++import com.autoexpensetracker.util.SearchLogic
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.filled.*
+ import androidx.compose.material3.*
+@@ -254,6 +260,9 @@ internal fun SearchReviewScreen(
+     allTransactions: List<Transaction>
+ ) {
+     val scope = rememberCoroutineScope()
++    val context = LocalContext.current
++    val focusRequester = remember { FocusRequester() }
++    val keyboard = LocalSoftwareKeyboardController.current
+ 
+     var searchQuery by rememberSaveable { mutableStateOf("") }
+     var directionFilter by rememberSaveable { mutableStateOf(DirectionFilter.ALL) }
+@@ -265,6 +274,27 @@ internal fun SearchReviewScreen(
+     var showDateRangeDialog by remember { mutableStateOf(false) }
+     var showFilterSheet by remember { mutableStateOf(false) }
+     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
++    // "Browse all transactions" from the idle state: shows the whole list
++    // even with no query and no filter.
++    var browseAll by rememberSaveable { mutableStateOf(false) }
++    var recentSearches by remember { mutableStateOf(RecentSearchStore.getAll(context)) }
++
++    // Opens with the keyboard up - the screen exists to be typed into. Only
++    // once there are transactions: with none, the search field isn't on screen
++    // and requestFocus() would throw because the requester has no target.
++    val hasTransactions = allTransactions.isNotEmpty()
++    LaunchedEffect(hasTransactions) {
++        if (hasTransactions) {
++            runCatching { focusRequester.requestFocus() }
++            keyboard?.show()
++        }
++    }
++
++    fun rememberCurrentQuery() {
++        if (SearchLogic.normalizeQuery(searchQuery).length >= 2) {
++            recentSearches = RecentSearchStore.add(context, searchQuery)
++        }
++    }
+ 
+     val activeFilterCount = (if (directionFilter != DirectionFilter.ALL) 1 else 0) +
+         (if (dateFilter != DateFilter.ALL_TIME) 1 else 0) +
+@@ -286,6 +316,17 @@ internal fun SearchReviewScreen(
+     fun clearAllFilters() { clearDirection(); clearDate(); clearCategory() }
+ 
+     val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
++    val isIdle = searchQuery.isBlank() && activeFilterCount == 0 && !browseAll
++    // Biggest spend categories this month, offered as quick filters.
++    val topCategories = remember(allTransactions) {
++        val month = MonthRange.current()
++        SearchLogic.topCategoryNames(
++            allTransactions
++                .filter { it.direction == Direction.SENT && month.contains(it.timestampMillis) }
++                .map { it.category to it.amount },
++            3
++        ).mapNotNull { Category.fromNameOrNull(it) }
++    }
+ 
+     Column(modifier = Modifier.fillMaxSize()) {
+         if (needsReviewCount > 0 && directionFilter != DirectionFilter.NEEDS_REVIEW) {
+@@ -295,8 +336,30 @@ internal fun SearchReviewScreen(
+         if (allTransactions.isEmpty()) {
+             EmptyState(showHint = false)
+         } else {
+-            SearchBar(searchQuery) { searchQuery = it }
++            SearchBar(
++                query = searchQuery,
++                onQueryChange = { searchQuery = it },
++                focusRequester = focusRequester,
++                onSearch = { rememberCurrentQuery(); keyboard?.hide() }
++            )
+ 
++            if (isIdle) {
++                SearchIdleState(
++                    recent = recentSearches,
++                    topCategories = topCategories,
++                    totalCount = allTransactions.size,
++                    onRecentClick = { searchQuery = it },
++                    onRemoveRecent = { recentSearches = RecentSearchStore.remove(context, it) },
++                    onClearRecent = { RecentSearchStore.clearAll(context); recentSearches = emptyList() },
++                    onQuickSent = { directionFilter = DirectionFilter.SENT },
++                    onQuickReceived = { directionFilter = DirectionFilter.RECEIVED },
++                    onQuickToday = { dateFilter = DateFilter.TODAY },
++                    onQuickWeek = { dateFilter = DateFilter.THIS_WEEK },
++                    onQuickMonth = { dateFilter = DateFilter.THIS_MONTH },
++                    onQuickCategory = { categoryFilter = it },
++                    onBrowseAll = { browseAll = true }
++                )
++            } else {
+             Row(
+                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                 horizontalArrangement = Arrangement.SpaceBetween,
+@@ -322,13 +385,24 @@ internal fun SearchReviewScreen(
+             if (filtered.isEmpty()) {
+                 NoResultsState()
+             } else {
++                Text(
++                    if (filtered.size == 1) "1 result" else "${filtered.size} results",
++                    style = MaterialTheme.typography.labelMedium,
++                    color = MutedText,
++                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
++                )
+                 SummaryHeader(
+                     transactions = filtered,
+                     directionFilter = directionFilter,
+                     onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
+                     onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
+                 )
+-                TransactionList(filtered, groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST, onRowClick = { selectedTransaction = it })
++                TransactionList(
++                    filtered,
++                    groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST,
++                    onRowClick = { rememberCurrentQuery(); selectedTransaction = it }
++                )
++            }
+             }
+         }
+     }
+@@ -851,12 +925,18 @@ private fun filterTransactions(
+         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+     }.timeInMillis
+ 
++    val q = query.trim()
++    // "340", "₹340", "Rs. 1,500", "1,50,000" also search by EXACT amount.
++    val amountQuery = SearchLogic.parseAmountQuery(q)
++
+     return transactions.filter { tx ->
+-        val matchesQuery = query.isBlank() ||
+-            (tx.merchantOrContact?.contains(query, ignoreCase = true) == true) ||
+-            tx.bankOrSource.contains(query, ignoreCase = true) ||
+-            (tx.note?.contains(query, ignoreCase = true) == true) ||
+-            (tx.tags?.contains(query, ignoreCase = true) == true)
++        val matchesQuery = q.isEmpty() ||
++            (tx.merchantOrContact?.contains(q, ignoreCase = true) == true) ||
++            tx.bankOrSource.contains(q, ignoreCase = true) ||
++            (tx.note?.contains(q, ignoreCase = true) == true) ||
++            (tx.tags?.contains(q, ignoreCase = true) == true) ||
++            (amountQuery != null && SearchLogic.amountMatches(tx.amount, amountQuery)) ||
++            SearchLogic.categoryMatches(q, tx.category, Category.fromNameOrNull(tx.category)?.label)
+ 
+         val matchesDirection = when (direction) {
+             DirectionFilter.ALL -> true
+@@ -883,18 +963,24 @@ private fun filterTransactions(
+ }
+ 
+ @Composable
+-private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
++private fun SearchBar(
++    query: String,
++    onQueryChange: (String) -> Unit,
++    focusRequester: FocusRequester,
++    onSearch: () -> Unit
++) {
+     OutlinedTextField(
+         value = query, onValueChange = onQueryChange,
+-        placeholder = { Text("Search merchant, bank, note, tag") },
++        placeholder = { Text("Merchant, category, note, amount") },
+         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+         trailingIcon = {
+             if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, contentDescription = "Clear search") }
+         },
+         singleLine = true,
+         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
++        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+         shape = RoundedCornerShape(12.dp),
+-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
++        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focusRequester)
+     )
+ }
+ 
+diff --git a/app/src/main/java/com/expensetracker/util/RecentSearchStore.kt b/app/src/main/java/com/expensetracker/util/RecentSearchStore.kt
+new file mode 100644
+index 0000000..575cf76
+--- /dev/null
++++ b/app/src/main/java/com/expensetracker/util/RecentSearchStore.kt
+@@ -0,0 +1,37 @@
++package com.autoexpensetracker.util
++
++import android.content.Context
++
++/**
++ * The last few things the user searched for, kept on this device only in
++ * plain SharedPreferences. They are typed merchant names and notes, so
++ * "Delete all data" clears them (see MainActivity) alongside the other
++ * preference-backed stores. Not part of the backup file: it is a
++ * convenience, not data.
++ */
++object RecentSearchStore {
++    private const val PREFS_NAME = "recent_searches"
++    private const val KEY_ITEMS = "items"
++
++    fun getAll(context: Context): List<String> =
++        SearchLogic.decodeRecent(
++            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_ITEMS, null)
++        )
++
++    /** Records [query] and returns the updated list. */
++    fun add(context: Context, query: String): List<String> =
++        save(context, SearchLogic.addRecent(getAll(context), query))
++
++    fun remove(context: Context, query: String): List<String> =
++        save(context, SearchLogic.removeRecent(getAll(context), query))
++
++    fun clearAll(context: Context) {
++        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
++    }
++
++    private fun save(context: Context, items: List<String>): List<String> {
++        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
++            .edit().putString(KEY_ITEMS, SearchLogic.encodeRecent(items)).apply()
++        return items
++    }
++}
+diff --git a/app/src/main/java/com/expensetracker/util/SearchLogic.kt b/app/src/main/java/com/expensetracker/util/SearchLogic.kt
+new file mode 100644
+index 0000000..e849ad5
+--- /dev/null
++++ b/app/src/main/java/com/expensetracker/util/SearchLogic.kt
+@@ -0,0 +1,101 @@
++package com.autoexpensetracker.util
++
++/**
++ * Pure rules behind the Search screen (no Android, no Room types) so they
++ * can be compiled and tested on their own.
++ */
++object SearchLogic {
++
++    // Currency prefix is optional; the number is plain digits, Western
++    // grouping (1,500,000) or Indian grouping (1,50,000). Anything else -
++    // "1,2,3", "12,34", "1,5000" - is not an amount.
++    private val AMOUNT = Regex(
++        "^(?:₹|rs\\.?|inr)?\\s*(\\d+(?:\\.\\d{1,2})?|\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d{1,2}(?:,\\d{2})*,\\d{3}(?:\\.\\d{1,2})?)$",
++        RegexOption.IGNORE_CASE
++    )
++
++    /** The search text as an exact rupee amount, or null if it isn't one. Accepts 340, ₹340, Rs. 1,500, 1,50,000, 99.50. */
++    fun parseAmountQuery(raw: String): Double? {
++        val match = AMOUNT.matchEntire(raw.trim()) ?: return null
++        return match.groupValues[1].replace(",", "").toDoubleOrNull()
++    }
++
++    /** Exact match to the paisa - "contains" would make 340 find 1340 and 3400. */
++    fun amountMatches(txAmount: Double, queryAmount: Double): Boolean =
++        Math.abs(txAmount - queryAmount) < 0.005
++
++    /**
++     * Whether the typed text names this category, by display label ("Food &
++     * Dining") or enum name ("FOOD"). Needs two characters so a single typed
++     * letter doesn't light up half the categories.
++     */
++    fun categoryMatches(query: String, categoryName: String?, categoryLabel: String?): Boolean {
++        val q = query.trim()
++        if (q.length < 2) return false
++        return (categoryName != null && categoryName.contains(q, ignoreCase = true)) ||
++            (categoryLabel != null && categoryLabel.contains(q, ignoreCase = true))
++    }
++
++    const val MAX_RECENT = 8
++    private const val MIN_RECORDABLE_LENGTH = 2
++
++    /** Collapses runs of whitespace and trims; the form a query is stored and compared in. */
++    fun normalizeQuery(raw: String): String {
++        val sb = StringBuilder()
++        var lastSpace = true
++        for (ch in raw) {
++            if (ch.isWhitespace()) {
++                if (!lastSpace) sb.append(' ')
++                lastSpace = true
++            } else {
++                sb.append(ch)
++                lastSpace = false
++            }
++        }
++        return sb.toString().trim()
++    }
++
++    /**
++     * New recent-searches list after searching for [query]: newest first,
++     * de-duplicated ignoring case (searching "swiggy" after "Swiggy" moves it
++     * to the top rather than adding a second entry), capped at [cap]. Queries
++     * shorter than two characters are not worth remembering.
++     */
++    fun addRecent(existing: List<String>, query: String, cap: Int = MAX_RECENT): List<String> {
++        val q = normalizeQuery(query)
++        if (q.length < MIN_RECORDABLE_LENGTH) return existing
++        val result = ArrayList<String>()
++        result.add(q)
++        for (e in existing) {
++            if (!e.equals(q, ignoreCase = true)) result.add(e)
++        }
++        return if (result.size > cap) result.subList(0, cap).toList() else result
++    }
++
++    fun removeRecent(existing: List<String>, query: String): List<String> =
++        existing.filter { !it.equals(query, ignoreCase = true) }
++
++    /** One entry per line - safe because the search box is single-line. */
++    fun encodeRecent(items: List<String>): String = items.joinToString("\n")
++
++    fun decodeRecent(stored: String?): List<String> {
++        if (stored == null) return emptyList()
++        val out = ArrayList<String>()
++        for (line in stored.split("\n")) {
++            val q = normalizeQuery(line)
++            if (q.isNotEmpty() && out.none { it.equals(q, ignoreCase = true) }) out.add(q)
++            if (out.size >= MAX_RECENT) break
++        }
++        return out
++    }
++
++    /** Category names ordered by total spend, highest first, at most [n]; null categories are skipped. */
++    fun topCategoryNames(spends: List<Pair<String?, Double>>, n: Int): List<String> {
++        val totals = LinkedHashMap<String, Double>()
++        for (s in spends) {
++            val name = s.first ?: continue
++            totals[name] = (totals[name] ?: 0.0) + s.second
++        }
++        return totals.entries.sortedByDescending { it.value }.take(n).map { it.key }
++    }
++}
