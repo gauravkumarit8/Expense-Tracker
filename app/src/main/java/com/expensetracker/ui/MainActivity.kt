@@ -68,6 +68,9 @@ import com.autoexpensetracker.util.SummaryPeriodStore
 import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
+import com.autoexpensetracker.ads.RewardedAdManager
+import com.autoexpensetracker.util.RewardLogic
+import com.autoexpensetracker.util.RewardStore
 import com.autoexpensetracker.update.AppUpdateHelper
 import com.autoexpensetracker.review.ReviewHelper
 import com.autoexpensetracker.review.ReviewPromptStore
@@ -248,6 +251,92 @@ class MainActivity : FragmentActivity() {
                     if (isPro) { pendingGatedAction?.invoke(); pendingGatedAction = null; showUpgradeDialog = false }
                 }
 
+                val snackbarHostState = remember { SnackbarHostState() }
+
+                // ---- Rewarded ads (REQUIREMENTS.md 2026-10-20) ----
+                // 1) A free user can use CSV export or import once a calendar
+                //    month after watching one rewarded ad.
+                // 2) After opening Search more than 4 times in a day, a free
+                //    user is offered (once a day, optional) one ad for a
+                //    banner-free day.
+                // Off in a release build until a rewarded ad unit ID is set in AdUnits.
+                val rewardedAds = remember { RewardedAdManager(applicationContext) }
+                val rewardsEnabled = RewardedAdManager.isConfigured
+                var unlock by remember { mutableStateOf(RewardStore.loadUnlock(context)) }
+                var dayState by remember { mutableStateOf(RewardStore.loadDayState(context)) }
+                var rewardPrompt by remember { mutableStateOf<RewardPrompt?>(null) }
+                var showSearchAdPrompt by remember { mutableStateOf(false) }
+                val adFreeToday = RewardLogic.isAdFreeToday(dayState, System.currentTimeMillis())
+
+                // Loads only with consent, for free users, once a unit is configured.
+                LaunchedEffect(canRequestAds, isPro, rewardsEnabled) {
+                    rewardedAds.setAllowed(canRequestAds && !isPro && rewardsEnabled)
+                }
+                // An open prompt with no ad ready (earlier load failed) tries again.
+                LaunchedEffect(rewardPrompt != null || showSearchAdPrompt) {
+                    if (rewardPrompt != null || showSearchAdPrompt) rewardedAds.preload()
+                }
+
+                fun rewardHint(): String {
+                    val now = System.currentTimeMillis()
+                    return when {
+                        RewardLogic.isUnlockAvailable(unlock, now) -> "Unlocked for this month - tap to use it"
+                        RewardLogic.isUnlockSpent(unlock, now) -> "This month's free use is taken - back on the 1st"
+                        else -> "Pro feature - watch a short ad to use it once this month"
+                    }
+                }
+
+                /** CSV export / import: Pro, or free once a month after an ad, or (rewards off) Pro only as before. */
+                fun requireProOrReward(featureName: String, action: () -> Unit) {
+                    if (isPro) { action(); return }
+                    if (!rewardsEnabled) { requirePro(action); return }
+                    if (RewardLogic.isUnlockAvailable(unlock, System.currentTimeMillis())) { action(); return }
+                    rewardPrompt = RewardPrompt(featureName, action)
+                }
+
+                /** Called after an unlocked action has actually completed. */
+                fun spendUnlockIfFree() {
+                    if (!isPro && rewardsEnabled) unlock = RewardStore.spendUnlock(context)
+                }
+
+                fun watchAdForUnlock(prompt: RewardPrompt) {
+                    rewardedAds.show(
+                        activity = this@MainActivity,
+                        onReward = {
+                            unlock = RewardStore.earnUnlock(context)
+                            rewardPrompt = null
+                            prompt.action()
+                        },
+                        onNoReward = { },
+                        onFailed = { scope.launch { snackbarHostState.showSnackbar("Couldn't show the ad. Please try again.") } }
+                    )
+                }
+
+                fun watchAdForAdFreeDay() {
+                    rewardedAds.show(
+                        activity = this@MainActivity,
+                        onReward = {
+                            dayState = RewardStore.grantAdFreeDay(context)
+                            showSearchAdPrompt = false
+                            scope.launch { snackbarHostState.showSnackbar("Banner ads are hidden for the rest of today") }
+                        },
+                        onNoReward = { },
+                        onFailed = { scope.launch { snackbarHostState.showSnackbar("Couldn't show the ad. Please try again.") } }
+                    )
+                }
+
+                /** Counts a Search opening and, at most once a day, offers the ad-free pass. */
+                fun onSearchOpened() {
+                    if (isPro || !rewardsEnabled || !canRequestAds) return
+                    val visits = RewardStore.recordSearchVisit(context)
+                    dayState = visits
+                    // Only ask when an ad is ready to play, so the offer is never a dead end.
+                    if (RewardLogic.shouldPromptSearch(visits, System.currentTimeMillis()) && rewardedAds.isReady) {
+                        dayState = RewardStore.markPrompted(context)
+                        showSearchAdPrompt = true
+                    }
+                }
+
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission()
                 ) { }
@@ -276,7 +365,6 @@ class MainActivity : FragmentActivity() {
                 androidx.activity.compose.BackHandler(enabled = showSettings) { showSettings = false }
                 androidx.activity.compose.BackHandler(enabled = showMonthlyHistory) { showMonthlyHistory = false }
                 androidx.activity.compose.BackHandler(enabled = showSearch) { showSearch = false }
-                val snackbarHostState = remember { SnackbarHostState() }
 
                 val exportLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument("application/json")
@@ -320,6 +408,7 @@ class MainActivity : FragmentActivity() {
                                     ?: throw IllegalStateException("Could not open the destination file")
                                 out.use { it.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray()) }
                             }
+                            spendUnlockIfFree()
                             snackbarHostState.showSnackbar("CSV saved (${transactions.size} transactions)")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("CSV export failed: ${e.message}")
@@ -396,6 +485,7 @@ class MainActivity : FragmentActivity() {
                                     com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
                                 }
                             }
+                            spendUnlockIfFree()
                             val message = buildString {
                                 append("Imported ${result.imported} transactions")
                                 if (result.skippedAsDuplicate > 0) append(", ${result.skippedAsDuplicate} already had a matching transaction")
@@ -521,7 +611,7 @@ class MainActivity : FragmentActivity() {
                                     // replacing the current-month Transactions view
                                     // with a separate destination. Badge mirrors
                                     // the old always-visible needs-review count.
-                                    IconButton(onClick = { showSearch = true }) {
+                                    IconButton(onClick = { showSearch = true; onSearchOpened() }) {
                                         if (needsReviewCount > 0) {
                                             BadgedBox(badge = {
                                                 Badge(containerColor = MaterialTheme.colorScheme.error) {
@@ -550,7 +640,7 @@ class MainActivity : FragmentActivity() {
                             // resolved (canRequestAds). Lives here, not inside
                             // each screen, so the ad is loaded once and keeps
                             // showing while the user switches tabs.
-                            if (!isPro && canRequestAds) {
+                            if (!isPro && canRequestAds && !adFreeToday) {
                                 BannerAdView()
                             }
                             NavigationBar {
@@ -619,18 +709,20 @@ class MainActivity : FragmentActivity() {
                                 // in case either is ever reached another way.
                                 onBackupRestoreClick = { requirePro { showBackupDialog = true } },
                                 onCsvExportClick = {
-                                    requirePro {
+                                    requireProOrReward("CSV export") {
                                         val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
                                         csvExportLauncher.launch(filename)
                                     }
                                 },
                                 onImportStatementClick = {
-                                    requirePro {
+                                    requireProOrReward("CSV import") {
                                         pendingStatementAccountLabel = ""
                                         showImportStatementDialog = true
                                     }
                                 },
                                 isPro = isPro,
+                                rewardsEnabled = rewardsEnabled,
+                                rewardHint = rewardHint(),
                                 onUpgradeClick = { if (isPro) showManageSubscriptionDialog = true else showUpgradeDialog = true },
                                 appLockEnabled = appLockEnabled,
                                 canUseAppLock = AppLockManager.canUseAppLock(context),
@@ -797,6 +889,23 @@ class MainActivity : FragmentActivity() {
                             }
                         )
                     }
+                    rewardPrompt?.let { prompt ->
+                        RewardedUnlockDialog(
+                            featureName = prompt.featureName,
+                            spentThisMonth = RewardLogic.isUnlockSpent(unlock, System.currentTimeMillis()),
+                            adReady = rewardedAds.isReady,
+                            onWatchAd = { watchAdForUnlock(prompt) },
+                            onUpgrade = { rewardPrompt = null; requirePro(prompt.action) },
+                            onDismiss = { rewardPrompt = null }
+                        )
+                    }
+                    if (showSearchAdPrompt) {
+                        SearchAdPromptDialog(
+                            adReady = rewardedAds.isReady,
+                            onWatchAd = { watchAdForAdFreeDay() },
+                            onDismiss = { showSearchAdPrompt = false }
+                        )
+                    }
                     if (showUpgradeDialog) {
                         UpgradeDialog(
                             products = proProducts,
@@ -847,3 +956,6 @@ class MainActivity : FragmentActivity() {
         super.onDestroy()
     }
 }
+
+/** A Pro action waiting for the user to choose between watching an ad and upgrading. */
+private class RewardPrompt(val featureName: String, val action: () -> Unit)

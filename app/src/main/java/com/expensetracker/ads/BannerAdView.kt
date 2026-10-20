@@ -29,18 +29,6 @@ import com.google.android.gms.ads.LoadAdError
 private const val TAG = "BannerAdView"
 
 /**
- * Real AdMob banner ad unit ID for this app (see AndroidManifest.xml's
- * matching real APPLICATION_ID meta-data, same publisher account
- * "8712457399917631"). NOT a test ID despite the earlier name — kept
- * as a fallback default so any call site that doesn't explicitly pass
- * one still gets a real unit. To exercise Google's always-fill test ad
- * instead (e.g. to confirm the *rendering* works, independent of
- * whether real inventory is currently filling), pass
- * "ca-app-pub-3940256099942544/6300978111" explicitly at the call site.
- */
-private const val DEFAULT_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/2481170515"
-
-/**
  * A standard banner ad. Renders nothing (zero height, no placeholder box)
  * if the ad fails to load — e.g. no network — so the app's core offline
  * functionality is never visually disrupted by an empty/broken ad slot.
@@ -60,7 +48,7 @@ private const val DEFAULT_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/24811
  * console (app not linked, wrong ad unit copied, etc).
  */
 @Composable
-fun BannerAdView(adUnitId: String = DEFAULT_BANNER_AD_UNIT_ID, modifier: Modifier = Modifier) {
+fun BannerAdView(adUnitId: String = AdUnits.banner, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val widthDp = LocalConfiguration.current.screenWidthDp
     var failed by remember { mutableStateOf(false) }
