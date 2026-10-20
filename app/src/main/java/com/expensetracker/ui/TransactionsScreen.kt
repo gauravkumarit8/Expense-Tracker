@@ -24,6 +24,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.autoexpensetracker.pdf.PdfAccessPolicy
+import com.autoexpensetracker.pdf.PdfPeriod
 import com.autoexpensetracker.util.RecentSearchStore
 import com.autoexpensetracker.util.SearchLogic
 import androidx.compose.material.icons.Icons
@@ -454,7 +456,9 @@ internal fun SearchReviewScreen(
 @Composable
 internal fun MonthlyHistoryScreen(
     transactionDao: TransactionDao,
-    allTransactions: List<Transaction>
+    allTransactions: List<Transaction>,
+    isPro: Boolean,
+    onExportPdf: (PdfPeriod) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -513,12 +517,25 @@ internal fun MonthlyHistoryScreen(
         PeriodBreakdown.forYear(allTransactions, selectedMonth.year)
     }
 
+    // What the PDF button would export right now: the day, month or year the
+    // screen is showing. Older months and every full year are Pro; the lock
+    // shows for a free user on those (PdfAccessPolicy).
+    val pdfPeriod: PdfPeriod = when (period) {
+        SummaryPeriod.DAY -> PdfPeriod.Day(selectedDay.year, selectedDay.month, selectedDay.day)
+        SummaryPeriod.MONTH -> PdfPeriod.Month(selectedMonth.year, selectedMonth.month)
+        SummaryPeriod.YEAR -> PdfPeriod.Year(selectedMonth.year)
+    }
+    val pdfLocked = !isPro && !PdfAccessPolicy.isFree(pdfPeriod, System.currentTimeMillis())
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.Center
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             SegmentedPeriodToggle(period = period, onPeriodChange = ::setPeriod)
+            Spacer(modifier = Modifier.width(8.dp))
+            PdfExportButton(locked = pdfLocked, onClick = { onExportPdf(pdfPeriod) })
         }
 
         when (period) {
@@ -901,6 +918,23 @@ private fun MonthYearPickerDialog(initial: MonthRange, onDismiss: () -> Unit, on
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+}
+
+@Composable
+private fun PdfExportButton(locked: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Box {
+            Icon(Icons.Filled.PictureAsPdf, contentDescription = if (locked) "Export PDF (Pro)" else "Export PDF")
+            if (locked) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp).align(Alignment.BottomEnd),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
 }
 
 private fun filterTransactions(

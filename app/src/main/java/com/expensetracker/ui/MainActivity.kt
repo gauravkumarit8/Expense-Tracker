@@ -412,6 +412,62 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
+                // ---- PDF report export (History screen) ----
+                // The period is kept as a string in rememberSaveable so the export
+                // survives the Activity being recreated while the system file
+                // picker is open.
+                var pendingPdf by rememberSaveable { mutableStateOf<String?>(null) }
+                val pdfExportLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("application/pdf")
+                ) { uri ->
+                    val period = com.autoexpensetracker.pdf.PdfPeriods.decode(pendingPdf)
+                    pendingPdf = null
+                    if (uri == null || period == null) return@rememberLauncherForActivityResult
+                    scope.launch {
+                        try {
+                            val snapshot = transactionDao.getAllOnce()
+                            withContext(Dispatchers.IO) {
+                                val out = context.contentResolver.openOutputStream(uri)
+                                    ?: throw IllegalStateException("Could not open the destination file")
+                                out.use { com.autoexpensetracker.pdf.PdfReportWriter.export(snapshot, period, it) }
+                            }
+                            val result = snackbarHostState.showSnackbar(
+                                "PDF saved", actionLabel = "Open", duration = SnackbarDuration.Long
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                try {
+                                    context.startActivity(
+                                        android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                            .setDataAndType(uri, "application/pdf")
+                                            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    )
+                                } catch (e: android.content.ActivityNotFoundException) {
+                                    snackbarHostState.showSnackbar("No app installed that can open PDF files")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("PDF export failed: ${e.message}")
+                        }
+                    }
+                }
+
+                fun requestPdf(period: com.autoexpensetracker.pdf.PdfPeriod) {
+                    // An empty period never reaches the file picker or the upgrade prompt.
+                    if (com.autoexpensetracker.pdf.PdfReportBuilder.countIn(allTransactions, period) == 0) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "No transactions in ${com.autoexpensetracker.pdf.PdfReportBuilder.periodLabel(period)} to export"
+                            )
+                        }
+                        return
+                    }
+                    val start = {
+                        pendingPdf = com.autoexpensetracker.pdf.PdfPeriods.encode(period)
+                        pdfExportLauncher.launch(com.autoexpensetracker.pdf.PdfReportBuilder.fileName(period))
+                    }
+                    if (com.autoexpensetracker.pdf.PdfAccessPolicy.isFree(period, System.currentTimeMillis())) start() else requirePro(start)
+                }
+
                 val isLocked = appLockEnabled && !isUnlocked
 
                 // First-launch disclosure flow (2026-09-04) — explains what
@@ -658,7 +714,9 @@ class MainActivity : FragmentActivity() {
                         } else if (showMonthlyHistory) {
                             MonthlyHistoryScreen(
                                 transactionDao = transactionDao,
-                                allTransactions = allTransactions
+                                allTransactions = allTransactions,
+                                isPro = isPro,
+                                onExportPdf = { requestPdf(it) }
                             )
                         } else if (showSearch) {
                             // Overlay, not a destination screen (2026-09-03) —
