@@ -385,8 +385,16 @@ class MainActivity : FragmentActivity() {
                                     BufferedReader(InputStreamReader(input)).readText()
                                 } ?: throw IllegalStateException("Could not read file")
                             }
+                            // A CSV written by this app's own "Export to CSV" is
+                            // recognised by its header and restored in full
+                            // (merchant, category, note, tags...); anything else is
+                            // treated as a bank statement, as before.
                             val result = withContext(Dispatchers.IO) {
-                                com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
+                                if (com.autoexpensetracker.importer.OwnCsv.looksLikeOwnExport(csvText)) {
+                                    com.autoexpensetracker.importer.OwnCsvImporter.import(transactionDao, csvText)
+                                } else {
+                                    com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
+                                }
                             }
                             val message = buildString {
                                 append("Imported ${result.imported} transactions")
@@ -395,6 +403,8 @@ class MainActivity : FragmentActivity() {
                             }
                             snackbarHostState.showSnackbar(message)
                         } catch (e: com.autoexpensetracker.importer.StatementCsvParser.ParseException) {
+                            snackbarHostState.showSnackbar("Couldn't read this file: ${e.message}")
+                        } catch (e: com.autoexpensetracker.importer.OwnCsv.ParseException) {
                             snackbarHostState.showSnackbar("Couldn't read this file: ${e.message}")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Import failed: ${e.message}")

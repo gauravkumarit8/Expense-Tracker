@@ -113,7 +113,7 @@ internal fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, on
         AlertDialog(
             onDismissRequest = { confirmingImport = false },
             title = { Text("Restore from backup?") },
-            text = { Text("This replaces ALL current transactions, reminders, and budgets with the contents of the backup file. This cannot be undone.") },
+            text = { Text("This replaces ALL current transactions, reminders, and budgets with the contents of the backup file, including anything this phone has captured since you installed the app. This cannot be undone. To keep what is already here and only add history, use Import transactions (CSV) instead.") },
             confirmButton = {
                 TextButton(onClick = { confirmingImport = false; onImport() }) {
                     Text("Replace everything", color = SemanticRed)
@@ -185,11 +185,18 @@ internal fun ImportStatementDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Import bank statement") },
+        title = { Text("Import transactions") },
         text = {
             Column {
                 Text(
-                    "Import a CSV statement downloaded from your bank to backfill history from before you installed the app. " +
+                    "Moving to a new phone? Choose a file made by \"Export to CSV\" on your old phone. " +
+                        "Every transaction comes back with its merchant, category, notes and tags. " +
+                        "Anything already in the app is skipped, so importing the same file twice is safe.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "You can also import a CSV statement downloaded from your bank to backfill history from before you installed the app. " +
                         "Common HDFC/ICICI/SBI/Axis-style column layouts are recognized automatically.",
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -197,14 +204,15 @@ internal fun ImportStatementDialog(
                 OutlinedTextField(
                     value = accountLabel,
                     onValueChange = onAccountLabelChange,
-                    label = { Text("Account name (optional)") },
+                    label = { Text("Account name (bank statements only, optional)") },
                     placeholder = { Text("e.g. HDFC Savings") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Transactions that look like ones already captured from a notification (same date, amount, and direction) are skipped automatically.",
+                    "Bank statement rows that look like ones already captured from a notification (same date, amount, and direction) are skipped automatically. " +
+                        "The CSV carries transactions only; reminders and budgets move with Backup & Restore.",
                     style = MaterialTheme.typography.bodySmall, color = MutedText
                 )
             }
@@ -358,8 +366,8 @@ internal fun SettingsScreen(
             item {
                 SettingsRow(
                     icon = Icons.Filled.UploadFile,
-                    title = "Import bank statement",
-                    subtitle = "Backfill history from a CSV downloaded from your bank",
+                    title = "Import transactions (CSV)",
+                    subtitle = "Moving phones? Import a CSV exported from this app, or a bank statement",
                     onClick = onImportStatementClick
                 )
                 Spacer(modifier = Modifier.height(8.dp))
