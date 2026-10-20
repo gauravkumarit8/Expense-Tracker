@@ -65,7 +65,6 @@ import com.autoexpensetracker.util.RecurringSuggestion
 import com.autoexpensetracker.util.MonthRange
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
-import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
@@ -73,6 +72,7 @@ import com.autoexpensetracker.review.ReviewHelper
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
 import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.ui.theme.SemanticOrange
 import com.autoexpensetracker.ui.theme.SemanticGray
@@ -144,7 +144,7 @@ internal fun OnboardingScreen(
                                 .padding(4.dp)
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(if (p == page) MaterialTheme.colorScheme.primary else Color(0xFFE0E0E0))
+                                .background(if (p == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
                         )
                     }
                 }
@@ -198,7 +198,7 @@ private fun OnboardingWelcomePage() {
     Spacer(modifier = Modifier.height(16.dp))
     Text(
         "Expense Tracker reads transaction alerts from your banking and UPI apps — things like \"Rs.500 debited...\" or \"You received Rs.1200\" — and logs them for you automatically. No typing every purchase by hand.",
-        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = Color(0xFF555555)
+        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MutedText
     )
 }
 
@@ -221,7 +221,7 @@ private fun OnboardingTransparencyPage() {
         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp).padding(top = 2.dp))
             Spacer(modifier = Modifier.width(12.dp))
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF444444))
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -246,11 +246,11 @@ private fun OnboardingPermissionPage(notificationAccessGranted: Boolean) {
         } else {
             "Tap below to open Android's Notification Access screen, then turn on the switch next to Expense Tracker. This is a system screen — Android, not us, controls it, and you can turn it off any time."
         },
-        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = Color(0xFF555555)
+        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MutedText
     )
     Spacer(modifier = Modifier.height(12.dp))
     Text(
         "You can still add and edit transactions manually if you'd rather not grant this — it just won't auto-capture new ones.",
-        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = Color.Gray
+        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = MutedText
     )
 }

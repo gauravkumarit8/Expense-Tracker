@@ -101,7 +101,7 @@ private enum class Screen(val label: String, val icon: androidx.compose.ui.graph
     HOME("Home", Icons.Filled.Home),
     TRANSACTIONS("Transactions", Icons.Filled.List),
     CHARTS("Charts", Icons.Filled.BarChart),
-    BUDGETS("Budgets", Icons.Filled.PieChart),
+    BUDGETS("Budgets", Icons.Filled.AccountBalanceWallet),
     REMINDERS("Reminders", Icons.Filled.NotificationsActive)
 }
 
@@ -385,8 +385,16 @@ class MainActivity : FragmentActivity() {
                                     BufferedReader(InputStreamReader(input)).readText()
                                 } ?: throw IllegalStateException("Could not read file")
                             }
+                            // A CSV written by this app's own "Export to CSV" is
+                            // recognised by its header and restored in full
+                            // (merchant, category, note, tags...); anything else is
+                            // treated as a bank statement, as before.
                             val result = withContext(Dispatchers.IO) {
-                                com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
+                                if (com.autoexpensetracker.importer.OwnCsv.looksLikeOwnExport(csvText)) {
+                                    com.autoexpensetracker.importer.OwnCsvImporter.import(transactionDao, csvText)
+                                } else {
+                                    com.autoexpensetracker.importer.StatementImporter.import(transactionDao, csvText, accountLabel)
+                                }
                             }
                             val message = buildString {
                                 append("Imported ${result.imported} transactions")
@@ -395,6 +403,8 @@ class MainActivity : FragmentActivity() {
                             }
                             snackbarHostState.showSnackbar(message)
                         } catch (e: com.autoexpensetracker.importer.StatementCsvParser.ParseException) {
+                            snackbarHostState.showSnackbar("Couldn't read this file: ${e.message}")
+                        } catch (e: com.autoexpensetracker.importer.OwnCsv.ParseException) {
                             snackbarHostState.showSnackbar("Couldn't read this file: ${e.message}")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Import failed: ${e.message}")
@@ -478,6 +488,15 @@ class MainActivity : FragmentActivity() {
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
                         if (!showSettings && !showMonthlyHistory && !showSearch && !isLocked) {
+                          Column {
+                            // One banner for all five tabs, above the nav bar.
+                            // Free users only, and only once UMP consent is
+                            // resolved (canRequestAds). Lives here, not inside
+                            // each screen, so the ad is loaded once and keeps
+                            // showing while the user switches tabs.
+                            if (!isPro && canRequestAds) {
+                                BannerAdView()
+                            }
                             NavigationBar {
                                 Screen.entries.forEach { s ->
                                     NavigationBarItem(
@@ -489,10 +508,11 @@ class MainActivity : FragmentActivity() {
                                             }
                                         },
                                         icon = { Icon(s.icon, contentDescription = s.label) },
-                                        label = { Text(s.label, fontSize = 10.sp) }
+                                        label = { Text(s.label, fontSize = 11.sp, maxLines = 1) }
                                     )
                                 }
                             }
+                          }
                         }
                     },
                     floatingActionButton = {
@@ -664,8 +684,6 @@ class MainActivity : FragmentActivity() {
                                     allTransactions = allTransactions,
                                     notificationAccessGranted = notificationAccessGranted,
                                     onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
-                                    isPro = isPro,
-                                    canRequestAds = canRequestAds,
                                     onSeeAllMonths = { showMonthlyHistory = true }
                                 )
                                 Screen.CHARTS -> ChartsScreen(allTransactions)

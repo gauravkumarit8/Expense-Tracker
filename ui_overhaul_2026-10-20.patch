@@ -1,0 +1,1906 @@
+diff --git a/REQUIREMENTS.md b/REQUIREMENTS.md
+index 6b28db4..c93097a 100644
+--- a/REQUIREMENTS.md
++++ b/REQUIREMENTS.md
+@@ -1018,6 +1018,10 @@ access + a validation step server-side.
+ | 2026-10-12 | `TransactionIngestor`: the review counter and capture timestamp are now recorded immediately after the insert, and each optional post-insert step (unusual-spend alert, budget warning, price-change alert, widget refresh) runs isolated in `runExtra` | Defect I introduced earlier: the counter and widget refresh ran AFTER three notification detectors with no isolation, so any exception in one of them skipped both for that transaction, and enqueue()'s retry could not recover it (on retry the transaction is already stored and is skipped as a duplicate). Whether this actually fired for anyone is unknown. |
+ | 2026-10-12 | Settings gained "Rate on Google Play" (opens the store listing via the app's own package name) and "Share with a friend" (share sheet with the listing link) | Google rations the in-app review pop-up and never shows it on sideloaded builds, so it cannot serve as a user-initiated "Rate this app" button; the store link always works. Share gives people a zero-cost way to recommend the app. |
+ | 2026-10-12 | How the above was verified: the pure logic (`SenderShape`, `NotificationLines`, `CaptureDiagnosis`, `ReviewPolicy`, `RelativeTime`) was compiled and run with a real `kotlinc` - 67 checks - and mutation-checked (restoring the old threshold of 10 and the suffix-less sender pattern produced 11 failures). The Android-bound code (listener service, ingestor, settings UI, stores, OEM intents) was only syntax-checked and cross-checked by hand; CI is the first real compile, and none of it has run on a device | Stated plainly so the next reader doesn't mistake "tests pass" for "verified on a Redmi". |
++| 2026-10-20 | Ads: one adaptive (anchored) banner now sits directly above the bottom navigation bar and shows on all five tabs (Home, Transactions, Charts, Budgets, Reminders) for free users once UMP consent is resolved. The two per-screen banners on Transactions were removed (the top one pushed the list down), along with the now-unused `isPro`/`canRequestAds` parameters of `TransactionsScreen` and four unused `BannerAdView` imports. `BannerAdView` keeps one `AdView` alive, collapses to zero height on failure, and retries up to 5 times, a minute apart (it used to give up for the life of the screen). Settings keeps its own banner (the nav bar is hidden there). | Ads only showed on 2 screens because each screen placed its own banner. A shell-level slot loads once instead of on every tab switch. Padding and a surface background separate the ad from the nav icons, because AdMob penalises ads that invite accidental taps - exact policy wording was not checked. **Unverified:** no compile and no device run; the banner returned HTTP 403 / code 3 in earlier tests, so whether the new unit fills is unknown. |
++| 2026-10-20 | Charts tab redesign: month switcher and a Spent / Received / Net card at the top; a donut by category (stable colour per category, percent and amount per row); a new daily-spending bar chart with a dashed daily-average line and the peak day highlighted; the 6-month trend now shows spent AND received side by side. Account balances moved to the bottom of the tab. New `ChartMath` holds the arithmetic (days in month, per-day totals, elapsed days for the average, bar fractions, percent label). | The old trend bars were sized as a fraction of a column that also held the labels, so the tallest bar could squeeze its own month label out of view; bars are now explicit dp heights with labels in their own row. The old category bars were all one colour. `ChartMath` was compiled and run with a real `kotlinc` (26 checks) and mutation-checked (3 mutants, all caught). **Unverified:** the Compose layout itself - no compile, no screenshot. Totals follow the app rules (SENT / RECEIVED only; UNKNOWN counts as neither). |
++| 2026-10-20 | Theme-aware colours across Home, Transactions, Budgets, Reminders, Settings, Charts and Onboarding: new `MutedText` (onSurface at 60%) replaces all hardcoded `Color.Gray`; `Color.White` card surfaces now use `colorScheme.surface`; pastel fills (`#FFF3E0`, `#E8F5E9`, `#FFEBEE`, `#EDE7F6`, `#E3F2FD`) became 12% tints of the semantic colours; the `#E0E0E0`/`#EDEDF2` bar tracks and dividers are faint onSurface tints; `netColorFor` became `@Composable`. Left as is: the white dot on the balance-history line, the "BEST VALUE" label, the amber `#F57C00` and the category palette. | Light, Dark and AMOLED themes are offered, but white cards and pastel fills ignored them. A scripted check (tree-sitter) confirmed no theme read sits in a non-composable function or a Canvas/remember/LaunchedEffect lambda. **Unverified:** no compile and no screenshots; contrast in Dark and AMOLED has not been looked at on a device. |
++| 2026-10-20 | Home and navigation: removed the Charts / Budgets / Reminders chips (same three destinations as the bottom bar), made "Recent activity" rows open the Transactions tab (they had `onClick = {}`), gave Budgets a wallet icon (Charts keeps the bar-chart icon) and raised nav labels from 10sp to 11sp. | The chips duplicated the nav bar and pushed content down; a row that looks tappable and does nothing reads as broken. Rows go to the list rather than a detail sheet because the detail dialog is private to `TransactionsScreen`. **Unverified:** no compile and no device run. |
+ 
+ ---
+ 
+diff --git a/app/src/main/java/com/expensetracker/ads/BannerAdView.kt b/app/src/main/java/com/expensetracker/ads/BannerAdView.kt
+index 64d2198..b213406 100644
+--- a/app/src/main/java/com/expensetracker/ads/BannerAdView.kt
++++ b/app/src/main/java/com/expensetracker/ads/BannerAdView.kt
+@@ -1,17 +1,25 @@
+ package com.autoexpensetracker.ads
+ 
+ import android.util.Log
+-import android.view.ViewGroup
++import androidx.compose.foundation.background
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.material3.MaterialTheme
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalConfiguration
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.viewinterop.AndroidView
++import kotlinx.coroutines.delay
+ import com.google.android.gms.ads.AdListener
+ import com.google.android.gms.ads.AdRequest
+ import com.google.android.gms.ads.AdSize
+@@ -53,31 +61,57 @@ private const val DEFAULT_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/24811
+  */
+ @Composable
+ fun BannerAdView(adUnitId: String = DEFAULT_BANNER_AD_UNIT_ID, modifier: Modifier = Modifier) {
+-    var loadFailed by remember { mutableStateOf(false) }
++    val context = LocalContext.current
++    val widthDp = LocalConfiguration.current.screenWidthDp
++    var failed by remember { mutableStateOf(false) }
++    var failures by remember { mutableIntStateOf(0) }
+ 
+-    if (loadFailed) return
+-
+-    AndroidView(
+-        modifier = modifier.fillMaxWidth().height(50.dp),
+-        factory = { context ->
+-            AdView(context).apply {
+-                setAdSize(AdSize.BANNER)
+-                setAdUnitId(adUnitId)
+-                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+-                adListener = object : AdListener() {
+-                    override fun onAdFailedToLoad(error: LoadAdError) {
+-                        Log.w(TAG, "Ad failed to load for unit $adUnitId — code=${error.code}, domain=${error.domain}, message=${error.message}")
+-                        // No network, no fill, whatever the reason — just
+-                        // collapse the slot rather than showing anything broken.
+-                        loadFailed = true
+-                    }
++    // One AdView for as long as this composable stays in the tree. Adaptive
++    // (anchored) size: fills the screen width and usually earns more than the
++    // fixed 320x50 banner.
++    val adView = remember(adUnitId, widthDp) {
++        AdView(context).apply {
++            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, widthDp))
++            setAdUnitId(adUnitId)
++            adListener = object : AdListener() {
++                override fun onAdFailedToLoad(error: LoadAdError) {
++                    Log.w(TAG, "Ad failed to load for unit $adUnitId — code=${error.code}, domain=${error.domain}, message=${error.message}")
++                    // Collapse the slot instead of showing anything broken;
++                    // the effect below retries after a pause.
++                    failures += 1
++                    failed = true
++                }
+ 
+-                    override fun onAdLoaded() {
+-                        Log.d(TAG, "Ad loaded successfully for unit $adUnitId")
+-                    }
++                override fun onAdLoaded() {
++                    Log.d(TAG, "Ad loaded successfully for unit $adUnitId")
++                    failed = false
+                 }
+-                loadAd(AdRequest.Builder().build())
+             }
+         }
+-    )
+-}
+\ No newline at end of file
++    }
++
++    DisposableEffect(adView) { onDispose { adView.destroy() } }
++    LaunchedEffect(adView) { adView.loadAd(AdRequest.Builder().build()) }
++
++    // A failed load (no network, no fill, a new unit still propagating) used
++    // to leave the slot empty until the user left the screen. Retry a few
++    // times, a minute apart, then give up for this session.
++    LaunchedEffect(failures) {
++        if (failures in 1..5) {
++            delay(60_000L)
++            adView.loadAd(AdRequest.Builder().build())
++        }
++    }
++
++    // Zero height (not removed) while failed, so the AdView stays alive for
++    // the retry and nothing visible is left behind.
++    val slot = if (failed) {
++        modifier.fillMaxWidth().height(0.dp)
++    } else {
++        modifier
++            .fillMaxWidth()
++            .background(MaterialTheme.colorScheme.surfaceContainer)
++            .padding(vertical = 4.dp)
++    }
++    AndroidView(modifier = slot, factory = { adView })
++}
+diff --git a/app/src/main/java/com/expensetracker/ui/BudgetsScreen.kt b/app/src/main/java/com/expensetracker/ui/BudgetsScreen.kt
+index 7e9afd8..9306116 100644
+--- a/app/src/main/java/com/expensetracker/ui/BudgetsScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/BudgetsScreen.kt
+@@ -65,7 +65,6 @@ import com.autoexpensetracker.util.RecurringSuggestion
+ import com.autoexpensetracker.util.MonthRange
+ import com.autoexpensetracker.util.SummaryPeriod
+ import com.autoexpensetracker.util.SummaryPeriodStore
+-import com.autoexpensetracker.ads.BannerAdView
+ import com.autoexpensetracker.ads.ConsentManager
+ import com.autoexpensetracker.billing.BillingManager
+ import com.autoexpensetracker.update.AppUpdateHelper
+@@ -73,6 +72,7 @@ import com.autoexpensetracker.review.ReviewHelper
+ import com.autoexpensetracker.review.ReviewPromptStore
+ import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+ import com.autoexpensetracker.ui.theme.BrandGreen
++import com.autoexpensetracker.ui.theme.MutedText
+ import com.autoexpensetracker.ui.theme.SemanticRed
+ import com.autoexpensetracker.ui.theme.SemanticOrange
+ import com.autoexpensetracker.ui.theme.SemanticGray
+@@ -114,7 +114,7 @@ internal fun BudgetsScreen(budgetDao: BudgetDao, allTransactions: List<Transacti
+ 
+     LazyColumn(contentPadding = PaddingValues(16.dp)) {
+         item {
+-            Text("Set a monthly limit per category. Tap any category to edit.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++            Text("Set a monthly limit per category. Tap any category to edit.", style = MaterialTheme.typography.bodySmall, color = MutedText)
+             Spacer(modifier = Modifier.height(12.dp))
+         }
+         items(Category.entries) { cat ->
+@@ -138,13 +138,13 @@ internal fun BudgetsScreen(budgetDao: BudgetDao, allTransactions: List<Transacti
+ 
+ @Composable
+ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick: () -> Unit) {
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, onClick = onClick) {
+         Column(modifier = Modifier.padding(12.dp)) {
+             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium)
+                 Text(
+                     if (limit != null) "${formatInrWhole(spent)} / ${formatInrWhole(limit)}" else "No limit set",
+-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                    style = MaterialTheme.typography.bodySmall, color = MutedText
+                 )
+             }
+             if (limit != null && limit > 0) {
+@@ -155,8 +155,9 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
+                     spent / limit > 0.7 -> Color(0xFFF57C00)
+                     else -> BrandGreen
+                 }
++                val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                 Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
+-                    drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
++                    drawRoundRect(color = trackColor, cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
+                     drawRoundRect(color = barColor, size = size.copy(width = size.width * fraction), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
+                 }
+                 if (spent > limit) {
+diff --git a/app/src/main/java/com/expensetracker/ui/ChartsScreen.kt b/app/src/main/java/com/expensetracker/ui/ChartsScreen.kt
+index f8ee22c..305b4b7 100644
+--- a/app/src/main/java/com/expensetracker/ui/ChartsScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/ChartsScreen.kt
+@@ -65,10 +65,11 @@ import com.autoexpensetracker.util.BiometricAuthHelper
+ import com.autoexpensetracker.util.DismissedSuggestionsStore
+ import com.autoexpensetracker.util.RecurringDetector
+ import com.autoexpensetracker.util.RecurringSuggestion
++import com.autoexpensetracker.ui.theme.MutedText
++import com.autoexpensetracker.util.ChartMath
+ import com.autoexpensetracker.util.MonthRange
+ import com.autoexpensetracker.util.SummaryPeriod
+ import com.autoexpensetracker.util.SummaryPeriodStore
+-import com.autoexpensetracker.ads.BannerAdView
+ import com.autoexpensetracker.ads.ConsentManager
+ import com.autoexpensetracker.billing.BillingManager
+ import com.autoexpensetracker.update.AppUpdateHelper
+@@ -233,8 +234,85 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
+     }
+ 
+     val total = byCategory.sumOf { it.second }
++    val monthReceived = remember(allTransactions, startOfMonth, endOfMonth) {
++        allTransactions
++            .filter { it.direction == Direction.RECEIVED && it.timestampMillis in startOfMonth..endOfMonth }
++            .sumOf { it.amount }
++    }
++    val dailySpend = remember(thisMonthSpend, selectedMonth) {
++        ChartMath.dailyTotals(
++            thisMonthSpend.map { it.timestampMillis to it.amount },
++            selectedMonth.year,
++            selectedMonth.month
++        )
++    }
++    val elapsedDays = remember(selectedMonth) {
++        ChartMath.elapsedDays(selectedMonth.year, selectedMonth.month, System.currentTimeMillis())
++    }
++    // Theme colours are read here, in composable scope, and handed down —
++    // they cannot be read inside a Canvas draw lambda.
++    val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+ 
+     LazyColumn(contentPadding = PaddingValues(16.dp)) {
++        item {
++            MonthSwitcher(
++                label = selectedMonth.label(),
++                canGoNext = !selectedMonth.isCurrentOrFuture(),
++                onPrevious = { selectedMonth = selectedMonth.previous() },
++                onNext = { selectedMonth = selectedMonth.next() }
++            )
++            Spacer(modifier = Modifier.height(12.dp))
++            MonthSummaryCard(spent = total, received = monthReceived)
++            Spacer(modifier = Modifier.height(24.dp))
++        }
++
++        item {
++            Text("Spending by category", style = MaterialTheme.typography.titleMedium)
++            Spacer(modifier = Modifier.height(12.dp))
++            if (byCategory.isEmpty()) {
++                Text("No spending in ${selectedMonth.label()}", style = MaterialTheme.typography.bodySmall, color = MutedText)
++            } else {
++                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
++                    SpendDonut(slices = byCategory, total = total, trackColor = trackColor)
++                }
++                Spacer(modifier = Modifier.height(16.dp))
++            }
++        }
++        if (byCategory.isNotEmpty()) {
++            items(byCategory) { (category, amount) ->
++                CategoryBarRow(category, amount, total, trackColor)
++                Spacer(modifier = Modifier.height(12.dp))
++            }
++        }
++
++        if (total > 0.0) {
++            item {
++                Spacer(modifier = Modifier.height(12.dp))
++                Text("Daily spending", style = MaterialTheme.typography.titleMedium)
++                Spacer(modifier = Modifier.height(4.dp))
++                DailySpendChart(
++                    daily = dailySpend,
++                    total = total,
++                    elapsedDays = elapsedDays,
++                    monthLabel = selectedMonth.label()
++                )
++                Spacer(modifier = Modifier.height(24.dp))
++            }
++        }
++
++        item {
++            Spacer(modifier = Modifier.height(4.dp))
++            Text("Spending trend", style = MaterialTheme.typography.titleMedium)
++            Text("Last 6 months, spent vs received. Tap a month to jump to it.", style = MaterialTheme.typography.bodySmall, color = MutedText)
++            Spacer(modifier = Modifier.height(12.dp))
++            SpendTrendChart(
++                allTransactions = allTransactions,
++                selectedMonth = selectedMonth,
++                onSelectMonth = { selectedMonth = it }
++            )
++            Spacer(modifier = Modifier.height(28.dp))
++        }
++
+         item {
+             Row(
+                 modifier = Modifier.fillMaxWidth(),
+@@ -243,7 +321,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
+             ) {
+                 Column {
+                     Text("Account balances", style = MaterialTheme.typography.titleMedium)
+-                    Text("Latest known balance per account", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                    Text("Latest known balance per account", style = MaterialTheme.typography.bodySmall, color = MutedText)
+                 }
+                 Row(verticalAlignment = Alignment.CenterVertically) {
+                     IconButton(onClick = { showAddBalanceDialog = true }) {
+@@ -256,7 +334,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
+                         Icon(
+                             if (balancesVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                             contentDescription = if (balancesVisible) "Hide balances" else "Show balances",
+-                            tint = Color.Gray
++                            tint = MutedText
+                         )
+                     }
+                 }
+@@ -268,7 +346,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
+                 Text(
+                     "No account balances yet — captured messages with a balance will show up here, or add one manually.",
+                     style = MaterialTheme.typography.bodySmall,
+-                    color = Color.Gray
++                    color = MutedText
+                 )
+                 Spacer(modifier = Modifier.height(20.dp))
+             }
+@@ -313,74 +391,6 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
+             item { Spacer(modifier = Modifier.height(20.dp)) }
+         }
+ 
+-        if (byCategory.isNotEmpty()) {
+-            item {
+-                Row(
+-                    modifier = Modifier.fillMaxWidth(),
+-                    horizontalArrangement = Arrangement.SpaceBetween,
+-                    verticalAlignment = Alignment.CenterVertically
+-                ) {
+-                    Column {
+-                        Text("Spending by category", style = MaterialTheme.typography.titleMedium)
+-                        Text("Total: ${formatInr(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+-                    }
+-                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                        IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
+-                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
+-                        }
+-                        Text(selectedMonth.label(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+-                        IconButton(
+-                            onClick = { selectedMonth = selectedMonth.next() },
+-                            enabled = !selectedMonth.isCurrentOrFuture()
+-                        ) {
+-                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
+-                        }
+-                    }
+-                }
+-                Spacer(modifier = Modifier.height(16.dp))
+-            }
+-            items(byCategory) { (category, amount) ->
+-                CategoryBarRow(category, amount, total)
+-                Spacer(modifier = Modifier.height(10.dp))
+-            }
+-        } else {
+-            item {
+-                Row(
+-                    modifier = Modifier.fillMaxWidth(),
+-                    horizontalArrangement = Arrangement.SpaceBetween,
+-                    verticalAlignment = Alignment.CenterVertically
+-                ) {
+-                    Text("Spending by category", style = MaterialTheme.typography.titleMedium)
+-                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                        IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
+-                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
+-                        }
+-                        Text(selectedMonth.label(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+-                        IconButton(
+-                            onClick = { selectedMonth = selectedMonth.next() },
+-                            enabled = !selectedMonth.isCurrentOrFuture()
+-                        ) {
+-                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
+-                        }
+-                    }
+-                }
+-                Text("No spending in ${selectedMonth.label()}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+-                Spacer(modifier = Modifier.height(20.dp))
+-            }
+-        }
+-
+-        item {
+-            Spacer(modifier = Modifier.height(12.dp))
+-            Text("Spending trend", style = MaterialTheme.typography.titleMedium)
+-            Text("Last 6 months — tap a bar to jump to that month", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+-            Spacer(modifier = Modifier.height(12.dp))
+-            SpendTrendChart(
+-                allTransactions = allTransactions,
+-                selectedMonth = selectedMonth,
+-                onSelectMonth = { selectedMonth = it }
+-            )
+-            Spacer(modifier = Modifier.height(20.dp))
+-        }
+     }
+ }
+ 
+@@ -414,14 +424,14 @@ private fun BalanceRow(
+         BalanceHistoryDialog(source = source, history = history, visible = visible, onDismiss = { showHistory = false })
+     }
+ 
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
+         Column(modifier = Modifier.padding(12.dp)) {
+             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
+                     Text(source, fontWeight = FontWeight.Medium)
+                     if (isManual) {
+                         Spacer(modifier = Modifier.width(6.dp))
+-                        Text("(manual)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
++                        Text("(manual)", style = MaterialTheme.typography.labelSmall, color = MutedText)
+                     }
+                 }
+                 Text(
+@@ -431,13 +441,13 @@ private fun BalanceRow(
+                 )
+             }
+             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+-                Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = MutedText)
+                 Row(verticalAlignment = Alignment.CenterVertically) {
+                     IconButton(onClick = { showHistory = true }, modifier = Modifier.size(32.dp)) {
+-                        Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = Color.Gray, modifier = Modifier.size(18.dp))
++                        Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = MutedText, modifier = Modifier.size(18.dp))
+                     }
+                     IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+-                        Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = Color.Gray, modifier = Modifier.size(18.dp))
++                        Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = MutedText, modifier = Modifier.size(18.dp))
+                     }
+                     IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
+                         Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
+@@ -475,7 +485,7 @@ private fun BalanceHistoryDialog(
+                     Text(
+                         pointDateFormat.format(Date(selectedTime)),
+                         style = MaterialTheme.typography.labelSmall,
+-                        color = Color.Gray
++                        color = MutedText
+                     )
+                     Text(
+                         if (visible) formatInr(selectedValue) else "₹ • • • • • •",
+@@ -534,19 +544,19 @@ private fun BalanceHistoryDialog(
+                         }
+                     }
+                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+-                        Text(dateFormat.format(Date(history.first().first)), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+-                        Text(dateFormat.format(Date(history.last().first)), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
++                        Text(dateFormat.format(Date(history.first().first)), style = MaterialTheme.typography.labelSmall, color = MutedText)
++                        Text(dateFormat.format(Date(history.last().first)), style = MaterialTheme.typography.labelSmall, color = MutedText)
+                     }
+                     Spacer(modifier = Modifier.height(4.dp))
+                     Text(
+                         if (visible) "Lowest: ${formatInr(minY)}" else "Lowest: ₹ • • • • • •",
+                         style = MaterialTheme.typography.labelSmall,
+-                        color = Color.Gray
++                        color = MutedText
+                     )
+                     Text(
+                         "${history.size} balance points captured — tap the chart to see any point",
+                         style = MaterialTheme.typography.labelSmall,
+-                        color = Color.Gray
++                        color = MutedText
+                     )
+                 }
+             }
+@@ -605,32 +615,215 @@ private fun AddOrEditBalanceDialog(
+     )
+ }
+ 
++/** One colour per category, kept stable so "Food" is the same colour everywhere. */
++private fun categoryColor(category: Category): Color = when (category) {
++    Category.FOOD -> Color(0xFFEF6C00)
++    Category.GROCERIES -> Color(0xFF43A047)
++    Category.SHOPPING -> Color(0xFFAB47BC)
++    Category.BILLS -> Color(0xFF1E88E5)
++    Category.TRANSFER -> Color(0xFF78909C)
++    Category.ENTERTAINMENT -> Color(0xFFEC407A)
++    Category.TRAVEL -> Color(0xFF00ACC1)
++    Category.HEALTH -> Color(0xFFE53935)
++    Category.OTHER -> Color(0xFF8D6E63)
++}
++
++@Composable
++private fun MonthSwitcher(label: String, canGoNext: Boolean, onPrevious: () -> Unit, onNext: () -> Unit) {
++    Row(
++        modifier = Modifier.fillMaxWidth(),
++        horizontalArrangement = Arrangement.SpaceBetween,
++        verticalAlignment = Alignment.CenterVertically
++    ) {
++        IconButton(onClick = onPrevious) {
++            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
++        }
++        Text(label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
++        IconButton(onClick = onNext, enabled = canGoNext) {
++            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
++        }
++    }
++}
++
++@Composable
++private fun MonthSummaryCard(spent: Double, received: Double) {
++    val net = received - spent
++    val netColor = if (net >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
++    val netText = (if (net >= 0.0) "+" else "-") + formatInrWhole(kotlin.math.abs(net))
++    Surface(
++        modifier = Modifier.fillMaxWidth(),
++        shape = RoundedCornerShape(16.dp),
++        color = MaterialTheme.colorScheme.surface,
++        tonalElevation = 1.dp
++    ) {
++        Row(
++            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 8.dp),
++            horizontalArrangement = Arrangement.SpaceEvenly
++        ) {
++            SummaryStat("Spent", formatInrWhole(spent), MaterialTheme.colorScheme.error)
++            SummaryStat("Received", formatInrWhole(received), MaterialTheme.colorScheme.primary)
++            SummaryStat("Net", netText, netColor)
++        }
++    }
++}
++
+ @Composable
+-private fun CategoryBarRow(category: Category, amount: Double, total: Double) {
+-    val fraction = if (total > 0) (amount / total).toFloat() else 0f
++private fun SummaryStat(label: String, value: String, valueColor: Color) {
++    Column(horizontalAlignment = Alignment.CenterHorizontally) {
++        Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText)
++        Spacer(modifier = Modifier.height(2.dp))
++        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = valueColor)
++    }
++}
++
++/** Ring split by category, total in the middle. */
++@Composable
++private fun SpendDonut(slices: List<Pair<Category, Double>>, total: Double, trackColor: Color) {
++    Box(modifier = Modifier.size(190.dp), contentAlignment = Alignment.Center) {
++        Canvas(modifier = Modifier.fillMaxSize()) {
++            val stroke = 28.dp.toPx()
++            val topLeft = Offset(stroke / 2f, stroke / 2f)
++            val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
++            drawArc(
++                color = trackColor,
++                startAngle = 0f,
++                sweepAngle = 360f,
++                useCenter = false,
++                topLeft = topLeft,
++                size = arcSize,
++                style = Stroke(width = stroke)
++            )
++            val gap = if (slices.size > 1) 2f else 0f
++            var start = -90f
++            slices.forEach { (category, amount) ->
++                val sweep = (amount / total * 360.0).toFloat()
++                drawArc(
++                    color = categoryColor(category),
++                    startAngle = start,
++                    sweepAngle = (sweep - gap).coerceAtLeast(0.5f),
++                    useCenter = false,
++                    topLeft = topLeft,
++                    size = arcSize,
++                    style = Stroke(width = stroke)
++                )
++                start += sweep
++            }
++        }
++        Column(horizontalAlignment = Alignment.CenterHorizontally) {
++            Text("Spent", style = MaterialTheme.typography.labelMedium, color = MutedText)
++            Text(formatInrWhole(total), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
++        }
++    }
++}
++
++@Composable
++private fun CategoryBarRow(category: Category, amount: Double, total: Double, trackColor: Color) {
++    val fraction = if (total > 0) (amount / total).toFloat().coerceIn(0f, 1f) else 0f
++    val color = categoryColor(category)
+     Column {
+-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+-            Text("${category.emoji} ${category.label}", style = MaterialTheme.typography.bodyMedium)
+-            Text("${formatInr(amount)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
++        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
++            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(color))
++            Spacer(modifier = Modifier.width(8.dp))
++            Text("${category.emoji} ${category.label}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
++            Text(ChartMath.percentLabel(amount, total), style = MaterialTheme.typography.bodySmall, color = MutedText)
++            Spacer(modifier = Modifier.width(12.dp))
++            Text(formatInr(amount), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
++        }
++        Spacer(modifier = Modifier.height(6.dp))
++        Box(
++            modifier = Modifier
++                .fillMaxWidth()
++                .height(6.dp)
++                .clip(RoundedCornerShape(3.dp))
++                .background(trackColor)
++        ) {
++            Box(
++                modifier = Modifier
++                    .fillMaxWidth(fraction)
++                    .fillMaxHeight()
++                    .clip(RoundedCornerShape(3.dp))
++                    .background(color)
++            )
+         }
+-        Spacer(modifier = Modifier.height(4.dp))
+-        Canvas(modifier = Modifier.fillMaxWidth().height(14.dp)) {
+-            drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f))
+-            drawRoundRect(
+-                color = SemanticIndigo,
+-                size = size.copy(width = size.width * fraction),
+-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f)
++    }
++}
++
++/** One bar per day of the month, with a dashed daily-average line and the peak day highlighted. */
++@Composable
++private fun DailySpendChart(daily: DoubleArray, total: Double, elapsedDays: Int, monthLabel: String) {
++    val barColor = MaterialTheme.colorScheme.primary
++    val peakColor = MaterialTheme.colorScheme.error
++    val lineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
++    val baseColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
++    val maxDay = daily.maxOrNull() ?: 0.0
++    val peak = ChartMath.peakIndex(daily)
++    val avg = ChartMath.dailyAverage(total, elapsedDays)
++
++    Text(
++        "Average ${formatInrWhole(avg)} a day in $monthLabel",
++        style = MaterialTheme.typography.bodySmall,
++        color = MutedText
++    )
++    if (peak >= 0) {
++        Text(
++            "Highest: day ${peak + 1}, ${formatInrWhole(daily[peak])}",
++            style = MaterialTheme.typography.bodySmall,
++            color = MutedText
++        )
++    }
++    Spacer(modifier = Modifier.height(10.dp))
++    Canvas(modifier = Modifier.fillMaxWidth().height(110.dp)) {
++        val n = daily.size
++        val slot = size.width / n
++        val barW = slot * 0.62f
++        val corner = androidx.compose.ui.geometry.CornerRadius(barW / 3f, barW / 3f)
++        daily.forEachIndexed { i, v ->
++            val f = ChartMath.barFraction(v, maxDay)
++            if (f > 0f) {
++                val h = size.height * f
++                drawRoundRect(
++                    color = if (i == peak) peakColor else barColor,
++                    topLeft = Offset(i * slot + (slot - barW) / 2f, size.height - h),
++                    size = androidx.compose.ui.geometry.Size(barW, h),
++                    cornerRadius = corner
++                )
++            }
++        }
++        drawLine(
++            color = baseColor,
++            start = Offset(0f, size.height),
++            end = Offset(size.width, size.height),
++            strokeWidth = 1.dp.toPx()
++        )
++        if (avg > 0.0 && maxDay > 0.0) {
++            val y = size.height - size.height * (avg / maxDay).toFloat().coerceIn(0f, 1f)
++            drawLine(
++                color = lineColor,
++                start = Offset(0f, y),
++                end = Offset(size.width, y),
++                strokeWidth = 1.dp.toPx(),
++                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(14f, 10f))
+             )
+         }
+     }
++    Spacer(modifier = Modifier.height(4.dp))
++    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
++        Text("1", style = MaterialTheme.typography.labelSmall, color = MutedText)
++        Text("${daily.size}", style = MaterialTheme.typography.labelSmall, color = MutedText)
++    }
+ }
+ 
++private data class TrendMonth(val month: MonthRange, val spent: Double, val received: Double)
++
+ /**
+- * Total SENT spend for each of the trailing 6 real-world months (ending at
++ * Spent and received for each of the trailing 6 real-world months (ending at
+  * the actual current month, independent of [selectedMonth] navigation, so
+- * the window doesn't shift under the user as they browse). Tapping a bar
+- * jumps [selectedMonth] to that month — this doubles as a second, more
+- * visual month picker alongside the prev/next arrows above.
++ * the window doesn't shift under the user as they browse). Tapping a month
++ * jumps [selectedMonth] to it.
++ *
++ * Bar heights are explicit dp values computed from the data, and the month
++ * labels sit in their own row below the bar area, so a tall bar can never
++ * push its label out of the chart.
+  */
+ @Composable
+ private fun SpendTrendChart(
+@@ -648,58 +841,92 @@ private fun SpendTrendChart(
+     }
+     val totals = remember(allTransactions, months) {
+         months.map { m ->
+-            m to allTransactions
+-                .filter { it.direction == Direction.SENT && m.contains(it.timestampMillis) }
+-                .sumOf { it.amount }
++            TrendMonth(
++                month = m,
++                spent = allTransactions
++                    .filter { it.direction == Direction.SENT && m.contains(it.timestampMillis) }
++                    .sumOf { it.amount },
++                received = allTransactions
++                    .filter { it.direction == Direction.RECEIVED && m.contains(it.timestampMillis) }
++                    .sumOf { it.amount }
++            )
+         }
+     }
+-    val maxTotal = totals.maxOfOrNull { it.second } ?: 0.0
++    val maxValue = totals.maxOfOrNull { maxOf(it.spent, it.received) } ?: 0.0
+ 
+-    if (maxTotal <= 0.0) {
+-        Text("Not enough history yet to show a trend.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++    if (maxValue <= 0.0) {
++        Text("Not enough history yet to show a trend.", style = MaterialTheme.typography.bodySmall, color = MutedText)
+         return
+     }
+ 
++    val spentColor = MaterialTheme.colorScheme.error
++    val receivedColor = MaterialTheme.colorScheme.primary
+     val monthShortFormat = remember { SimpleDateFormat("MMM", Locale.getDefault()) }
++    val chartHeight = 130.dp
++    val barShape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
+ 
+-    Row(
+-        modifier = Modifier
+-            .fillMaxWidth()
+-            .height(140.dp),
+-        horizontalArrangement = Arrangement.SpaceEvenly,
+-        verticalAlignment = Alignment.Bottom
+-    ) {
+-        totals.forEach { (month, amount) ->
+-            val isSelected = month == selectedMonth
+-            val fraction = (amount / maxTotal).toFloat().coerceIn(0f, 1f)
++    val selected = totals.firstOrNull { it.month == selectedMonth }
++    if (selected != null) {
++        Text(
++            "${selected.month.label()}: spent ${formatInrWhole(selected.spent)}, received ${formatInrWhole(selected.received)}",
++            style = MaterialTheme.typography.bodyMedium,
++            fontWeight = FontWeight.Medium
++        )
++        Spacer(modifier = Modifier.height(10.dp))
++    }
++
++    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
++        totals.forEach { t ->
++            val isSelected = t.month == selectedMonth
++            val alpha = if (isSelected) 1f else 0.45f
+             Column(
+                 horizontalAlignment = Alignment.CenterHorizontally,
+                 modifier = Modifier
+                     .weight(1f)
+-                    .fillMaxHeight()
++                    .clip(RoundedCornerShape(8.dp))
++                    .clickable(onClick = { onSelectMonth(t.month) })
+             ) {
+-                Spacer(modifier = Modifier.weight(1f))
+-                if (isSelected && amount > 0) {
+-                    Text(formatInrWhole(amount), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+-                    Spacer(modifier = Modifier.height(2.dp))
+-                }
+                 Box(
+-                    modifier = Modifier
+-                        .fillMaxWidth(0.55f)
+-                        .fillMaxHeight(fraction.coerceAtLeast(0.02f))
+-                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+-                        .background(if (isSelected) SemanticIndigo else SemanticIndigo.copy(alpha = 0.35f))
+-                        .clickable(onClick = { onSelectMonth(month) })
+-                )
++                    modifier = Modifier.fillMaxWidth().height(chartHeight),
++                    contentAlignment = Alignment.BottomCenter
++                ) {
++                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
++                        Box(
++                            modifier = Modifier
++                                .width(12.dp)
++                                .height(chartHeight * ChartMath.barFraction(t.spent, maxValue))
++                                .clip(barShape)
++                                .background(spentColor.copy(alpha = alpha))
++                        )
++                        Box(
++                            modifier = Modifier
++                                .width(12.dp)
++                                .height(chartHeight * ChartMath.barFraction(t.received, maxValue))
++                                .clip(barShape)
++                                .background(receivedColor.copy(alpha = alpha))
++                        )
++                    }
++                }
+                 Spacer(modifier = Modifier.height(6.dp))
+                 Text(
+-                    monthShortFormat.format(Date(month.startOfMonthMillis())),
++                    monthShortFormat.format(Date(t.month.startOfMonthMillis())),
+                     style = MaterialTheme.typography.labelSmall,
+-                    color = if (isSelected) SemanticIndigo else Color.Gray,
++                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MutedText,
+                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                 )
++                Spacer(modifier = Modifier.height(4.dp))
+             }
+         }
+     }
+-}
+ 
++    Spacer(modifier = Modifier.height(8.dp))
++    Row(verticalAlignment = Alignment.CenterVertically) {
++        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(spentColor))
++        Spacer(modifier = Modifier.width(4.dp))
++        Text("Spent", style = MaterialTheme.typography.labelSmall, color = MutedText)
++        Spacer(modifier = Modifier.width(12.dp))
++        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(receivedColor))
++        Spacer(modifier = Modifier.width(4.dp))
++        Text("Received", style = MaterialTheme.typography.labelSmall, color = MutedText)
++    }
++}
+diff --git a/app/src/main/java/com/expensetracker/ui/DashboardScreen.kt b/app/src/main/java/com/expensetracker/ui/DashboardScreen.kt
+index e10c92f..3ec02f4 100644
+--- a/app/src/main/java/com/expensetracker/ui/DashboardScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/DashboardScreen.kt
+@@ -15,9 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.filled.ArrowForward
+-import androidx.compose.material.icons.filled.BarChart
+-import androidx.compose.material.icons.filled.NotificationsActive
+-import androidx.compose.material.icons.filled.PieChart
+ import androidx.compose.material.icons.filled.Receipt
+ import androidx.compose.material.icons.filled.TrendingDown
+ import androidx.compose.material.icons.filled.TrendingFlat
+@@ -44,6 +41,7 @@ import com.autoexpensetracker.data.Reminder
+ import com.autoexpensetracker.data.ReminderDao
+ import com.autoexpensetracker.data.Transaction
+ import com.autoexpensetracker.ui.theme.BrandGreen
++import com.autoexpensetracker.ui.theme.MutedText
+ import com.autoexpensetracker.ui.theme.SemanticGray
+ import com.autoexpensetracker.ui.theme.SemanticRed
+ import com.autoexpensetracker.util.MonthRange
+@@ -200,7 +198,7 @@ internal fun DashboardScreen(
+         ) {
+             item {
+                 Column {
+-                    Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
++                    Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = MutedText)
+                     Text(monthRange.label(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                 }
+             }
+@@ -209,17 +207,6 @@ internal fun DashboardScreen(
+                 MonthSummaryHeroCard(spent = spent, received = received, net = net, onClick = onSeeCharts)
+             }
+ 
+-            item {
+-                Row(
+-                    modifier = Modifier.fillMaxWidth(),
+-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+-                ) {
+-                    QuickActionChip("Charts", Icons.Filled.BarChart, Modifier.weight(1f), onSeeCharts)
+-                    QuickActionChip("Budgets", Icons.Filled.PieChart, Modifier.weight(1f), onSeeBudgets)
+-                    QuickActionChip("Reminders", Icons.Filled.NotificationsActive, Modifier.weight(1f), onSeeReminders)
+-                }
+-            }
+-
+             item {
+                 TodaySpendCard(
+                     todaySpend = todaySpend,
+@@ -279,9 +266,9 @@ internal fun DashboardScreen(
+                             onAction = onAddTransaction
+                         )
+                     } else {
+-                        Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
++                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
+                             Column {
+-                                recentTransactions.forEach { tx -> TransactionRow(tx, timeFormat, onClick = {}) }
++                                recentTransactions.forEach { tx -> TransactionRow(tx, timeFormat, onClick = onSeeAllTransactions) }
+                             }
+                         }
+                     }
+@@ -305,22 +292,22 @@ private fun TodaySpendCard(
+     // stock price, which is intentional: this is a spend tracker, not an
+     // investment tracker, and less spending is the desired direction.
+     val (trendIcon, trendColor, trendText) = when {
+-        comparisonSpend <= 0.0 && todaySpend <= 0.0 -> Triple(Icons.Filled.TrendingFlat, Color.Gray, "No spending yet")
++        comparisonSpend <= 0.0 && todaySpend <= 0.0 -> Triple(Icons.Filled.TrendingFlat, MutedText, "No spending yet")
+         comparisonSpend <= 0.0 -> Triple(Icons.Filled.TrendingUp, SemanticRed, "No spend that day to compare")
+         else -> {
+             val percent = ((todaySpend - comparisonSpend) / comparisonSpend) * 100
+             when {
+                 percent > 0.5 -> Triple(Icons.Filled.TrendingUp, SemanticRed, "+${"%.0f".format(percent)}% ${comparisonPeriod.label}")
+                 percent < -0.5 -> Triple(Icons.Filled.TrendingDown, MaterialTheme.colorScheme.primary, "${"%.0f".format(percent)}% ${comparisonPeriod.label}")
+-                else -> Triple(Icons.Filled.TrendingFlat, Color.Gray, "About the same ${comparisonPeriod.label}")
++                else -> Triple(Icons.Filled.TrendingFlat, MutedText, "About the same ${comparisonPeriod.label}")
+             }
+         }
+     }
+ 
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
+         Column(modifier = Modifier.padding(16.dp)) {
+             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+-                Text("Today", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++                Text("Today", style = MaterialTheme.typography.labelLarge, color = MutedText)
+                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                     SpendComparisonPeriod.entries.forEach { period ->
+                         FilterChip(
+@@ -337,9 +324,9 @@ private fun TodaySpendCard(
+             val netColor = when {
+                 todayNet > 0.0 -> BrandGreen
+                 todayNet < 0.0 -> SemanticRed
+-                else -> Color.Gray
++                else -> MutedText
+             }
+-            Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
++            Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
+             Text(
+                 "${if (todayNet >= 0) "+" else "−"}${formatInr(kotlin.math.abs(todayNet))}",
+                 style = MaterialTheme.typography.headlineSmall,
+@@ -368,7 +355,7 @@ private fun TodaySpendCard(
+ @Composable
+ private fun TodayStat(label: String, amount: Double, color: Color) {
+     Column {
+-        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
++        Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText)
+         Text(
+             formatInr(amount),
+             style = MaterialTheme.typography.titleMedium,
+@@ -396,12 +383,12 @@ private fun SincePaydayCard(info: SinceLastSalary) {
+     val spentFraction = if (info.amount > 0) (info.spentSince / info.amount).toFloat().coerceIn(0f, 1f) else 0f
+     val dateFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+ 
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
+         Column(modifier = Modifier.padding(16.dp)) {
+             Text(
+                 "Since your last salary credit",
+                 style = MaterialTheme.typography.labelLarge,
+-                color = Color.Gray
++                color = MutedText
+             )
+             Spacer(modifier = Modifier.height(8.dp))
+             Row(
+@@ -413,13 +400,13 @@ private fun SincePaydayCard(info: SinceLastSalary) {
+                     Text(formatInr(info.spentSince), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                     Text(
+                         "spent of ${formatInr(info.amount)} received on ${dateFormat.format(Date(info.timestampMillis))}",
+-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                        style = MaterialTheme.typography.bodySmall, color = MutedText
+                     )
+                 }
+                 Text(
+                     "${info.daysSince}d ago",
+                     style = MaterialTheme.typography.labelMedium,
+-                    color = Color.Gray
++                    color = MutedText
+                 )
+             }
+             Spacer(modifier = Modifier.height(10.dp))
+@@ -431,8 +418,9 @@ private fun SincePaydayCard(info: SinceLastSalary) {
+             // a @Composable function" — this is exactly what broke the CI
+             // build; see the decision log).
+             val progressColor = MaterialTheme.colorScheme.primary
++            val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+             Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
+-                drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
++                drawRoundRect(color = trackColor, cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
+                 drawRoundRect(
+                     color = if (spentFraction >= 1f) SemanticRed else progressColor,
+                     size = size.copy(width = size.width * spentFraction),
+@@ -443,7 +431,7 @@ private fun SincePaydayCard(info: SinceLastSalary) {
+                 Spacer(modifier = Modifier.height(6.dp))
+                 Text(
+                     "Based on ${info.confirmedOccurrences} months so far — gets more reliable with more history.",
+-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray
++                    style = MaterialTheme.typography.labelSmall, color = MutedText
+                 )
+             }
+         }
+@@ -505,25 +493,6 @@ private fun HeroStat(label: String, amount: Double) {
+     }
+ }
+ 
+-@Composable
+-private fun QuickActionChip(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
+-    Surface(
+-        modifier = modifier,
+-        shape = RoundedCornerShape(16.dp),
+-        color = MaterialTheme.colorScheme.surfaceVariant,
+-        onClick = onClick
+-    ) {
+-        Column(
+-            modifier = Modifier.padding(vertical = 14.dp),
+-            horizontalAlignment = Alignment.CenterHorizontally
+-        ) {
+-            Icon(icon, contentDescription = label, tint = MaterialTheme.colorScheme.primary)
+-            Spacer(modifier = Modifier.height(4.dp))
+-            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+-        }
+-    }
+-}
+-
+ @Composable
+ private fun DashboardSection(title: String, onSeeAll: () -> Unit, content: @Composable () -> Unit) {
+     Column {
+@@ -576,14 +545,14 @@ private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
+         fraction > 0.7f -> Color(0xFFF57C00)
+         else -> MaterialTheme.colorScheme.primary
+     }
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
+         Column(modifier = Modifier.padding(12.dp)) {
+             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                 Text(
+                     "${formatInrWhole(spent)} / ${formatInrWhole(limit)}",
+                     style = MaterialTheme.typography.bodySmall,
+-                    color = Color.Gray
++                    color = MutedText
+                 )
+             }
+             Spacer(modifier = Modifier.height(6.dp))
+@@ -601,7 +570,7 @@ private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
+ 
+ @Composable
+ private fun UpcomingReminderRow(reminder: Reminder) {
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
+         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+             Box(
+                 modifier = Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+@@ -620,7 +589,7 @@ private fun UpcomingReminderRow(reminder: Reminder) {
+                 Text(
+                     "Due day ${reminder.dueDayOfMonth}" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
+                     style = MaterialTheme.typography.bodySmall,
+-                    color = Color.Gray
++                    color = MutedText
+                 )
+             }
+             Icon(Icons.Filled.Receipt, contentDescription = null, tint = SemanticGray)
+diff --git a/app/src/main/java/com/expensetracker/ui/MainActivity.kt b/app/src/main/java/com/expensetracker/ui/MainActivity.kt
+index c7d2e49..1dd6d09 100644
+--- a/app/src/main/java/com/expensetracker/ui/MainActivity.kt
++++ b/app/src/main/java/com/expensetracker/ui/MainActivity.kt
+@@ -101,7 +101,7 @@ private enum class Screen(val label: String, val icon: androidx.compose.ui.graph
+     HOME("Home", Icons.Filled.Home),
+     TRANSACTIONS("Transactions", Icons.Filled.List),
+     CHARTS("Charts", Icons.Filled.BarChart),
+-    BUDGETS("Budgets", Icons.Filled.PieChart),
++    BUDGETS("Budgets", Icons.Filled.AccountBalanceWallet),
+     REMINDERS("Reminders", Icons.Filled.NotificationsActive)
+ }
+ 
+@@ -478,6 +478,15 @@ class MainActivity : FragmentActivity() {
+                     snackbarHost = { SnackbarHost(snackbarHostState) },
+                     bottomBar = {
+                         if (!showSettings && !showMonthlyHistory && !showSearch && !isLocked) {
++                          Column {
++                            // One banner for all five tabs, above the nav bar.
++                            // Free users only, and only once UMP consent is
++                            // resolved (canRequestAds). Lives here, not inside
++                            // each screen, so the ad is loaded once and keeps
++                            // showing while the user switches tabs.
++                            if (!isPro && canRequestAds) {
++                                BannerAdView()
++                            }
+                             NavigationBar {
+                                 Screen.entries.forEach { s ->
+                                     NavigationBarItem(
+@@ -489,10 +498,11 @@ class MainActivity : FragmentActivity() {
+                                             }
+                                         },
+                                         icon = { Icon(s.icon, contentDescription = s.label) },
+-                                        label = { Text(s.label, fontSize = 10.sp) }
++                                        label = { Text(s.label, fontSize = 11.sp, maxLines = 1) }
+                                     )
+                                 }
+                             }
++                          }
+                         }
+                     },
+                     floatingActionButton = {
+@@ -664,8 +674,6 @@ class MainActivity : FragmentActivity() {
+                                     allTransactions = allTransactions,
+                                     notificationAccessGranted = notificationAccessGranted,
+                                     onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
+-                                    isPro = isPro,
+-                                    canRequestAds = canRequestAds,
+                                     onSeeAllMonths = { showMonthlyHistory = true }
+                                 )
+                                 Screen.CHARTS -> ChartsScreen(allTransactions)
+diff --git a/app/src/main/java/com/expensetracker/ui/OnboardingScreen.kt b/app/src/main/java/com/expensetracker/ui/OnboardingScreen.kt
+index a2588df..d0171b2 100644
+--- a/app/src/main/java/com/expensetracker/ui/OnboardingScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/OnboardingScreen.kt
+@@ -65,7 +65,6 @@ import com.autoexpensetracker.util.RecurringSuggestion
+ import com.autoexpensetracker.util.MonthRange
+ import com.autoexpensetracker.util.SummaryPeriod
+ import com.autoexpensetracker.util.SummaryPeriodStore
+-import com.autoexpensetracker.ads.BannerAdView
+ import com.autoexpensetracker.ads.ConsentManager
+ import com.autoexpensetracker.billing.BillingManager
+ import com.autoexpensetracker.update.AppUpdateHelper
+@@ -73,6 +72,7 @@ import com.autoexpensetracker.review.ReviewHelper
+ import com.autoexpensetracker.review.ReviewPromptStore
+ import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+ import com.autoexpensetracker.ui.theme.BrandGreen
++import com.autoexpensetracker.ui.theme.MutedText
+ import com.autoexpensetracker.ui.theme.SemanticRed
+ import com.autoexpensetracker.ui.theme.SemanticOrange
+ import com.autoexpensetracker.ui.theme.SemanticGray
+@@ -144,7 +144,7 @@ internal fun OnboardingScreen(
+                                 .padding(4.dp)
+                                 .size(8.dp)
+                                 .clip(CircleShape)
+-                                .background(if (p == page) MaterialTheme.colorScheme.primary else Color(0xFFE0E0E0))
++                                .background(if (p == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+                         )
+                     }
+                 }
+@@ -198,7 +198,7 @@ private fun OnboardingWelcomePage() {
+     Spacer(modifier = Modifier.height(16.dp))
+     Text(
+         "Expense Tracker reads transaction alerts from your banking and UPI apps — things like \"Rs.500 debited...\" or \"You received Rs.1200\" — and logs them for you automatically. No typing every purchase by hand.",
+-        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = Color(0xFF555555)
++        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MutedText
+     )
+ }
+ 
+@@ -221,7 +221,7 @@ private fun OnboardingTransparencyPage() {
+         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
+             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp).padding(top = 2.dp))
+             Spacer(modifier = Modifier.width(12.dp))
+-            Text(text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF444444))
++            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+         }
+     }
+ }
+@@ -246,11 +246,11 @@ private fun OnboardingPermissionPage(notificationAccessGranted: Boolean) {
+         } else {
+             "Tap below to open Android's Notification Access screen, then turn on the switch next to Expense Tracker. This is a system screen — Android, not us, controls it, and you can turn it off any time."
+         },
+-        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = Color(0xFF555555)
++        style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MutedText
+     )
+     Spacer(modifier = Modifier.height(12.dp))
+     Text(
+         "You can still add and edit transactions manually if you'd rather not grant this — it just won't auto-capture new ones.",
+-        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = Color.Gray
++        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = MutedText
+     )
+ }
+diff --git a/app/src/main/java/com/expensetracker/ui/RemindersScreen.kt b/app/src/main/java/com/expensetracker/ui/RemindersScreen.kt
+index 71cacff..216582a 100644
+--- a/app/src/main/java/com/expensetracker/ui/RemindersScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/RemindersScreen.kt
+@@ -68,7 +68,6 @@ import com.autoexpensetracker.util.PriceChangeStore
+ import com.autoexpensetracker.util.MonthRange
+ import com.autoexpensetracker.util.SummaryPeriod
+ import com.autoexpensetracker.util.SummaryPeriodStore
+-import com.autoexpensetracker.ads.BannerAdView
+ import com.autoexpensetracker.ads.ConsentManager
+ import com.autoexpensetracker.billing.BillingManager
+ import com.autoexpensetracker.update.AppUpdateHelper
+@@ -76,6 +75,7 @@ import com.autoexpensetracker.review.ReviewHelper
+ import com.autoexpensetracker.review.ReviewPromptStore
+ import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+ import com.autoexpensetracker.ui.theme.BrandGreen
++import com.autoexpensetracker.ui.theme.MutedText
+ import com.autoexpensetracker.ui.theme.SemanticRed
+ import com.autoexpensetracker.ui.theme.SemanticOrange
+ import com.autoexpensetracker.ui.theme.SemanticGray
+@@ -123,7 +123,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
+                 Spacer(modifier = Modifier.height(12.dp))
+                 Text("No reminders yet", style = MaterialTheme.typography.titleMedium)
+                 Spacer(modifier = Modifier.height(4.dp))
+-                Text("Tap + to add a bill or subscription reminder.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                Text("Tap + to add a bill or subscription reminder.", style = MaterialTheme.typography.bodySmall, color = MutedText)
+             }
+         }
+     } else {
+@@ -139,7 +139,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
+             }
+             if (priceChangeAlerts.isNotEmpty()) {
+                 item {
+-                    Text("Price changes detected", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
++                    Text("Price changes detected", style = MaterialTheme.typography.titleSmall, color = MutedText)
+                     Spacer(modifier = Modifier.height(8.dp))
+                 }
+                 items(priceChangeAlerts, key = { it.merchant + it.newAmount }) { alert ->
+@@ -156,7 +156,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
+             }
+             if (suggestions.isNotEmpty()) {
+                 item {
+-                    Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
++                    Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = MutedText)
+                     Spacer(modifier = Modifier.height(8.dp))
+                 }
+                 items(suggestions) { suggestion ->
+@@ -183,7 +183,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
+                 if (reminders.isNotEmpty()) {
+                     item {
+                         Spacer(modifier = Modifier.height(12.dp))
+-                        Text("Your reminders", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
++                        Text("Your reminders", style = MaterialTheme.typography.titleSmall, color = MutedText)
+                         Spacer(modifier = Modifier.height(8.dp))
+                     }
+                 }
+@@ -240,7 +240,7 @@ private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
+     Surface(
+         modifier = Modifier.fillMaxWidth(),
+         shape = RoundedCornerShape(14.dp),
+-        color = if (up) Color(0xFFFFF3E0) else Color(0xFFE8F5E9)
++        color = if (up) SemanticOrange.copy(alpha = 0.12f) else BrandGreen.copy(alpha = 0.12f)
+     ) {
+         Column(modifier = Modifier.padding(12.dp)) {
+             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+@@ -253,7 +253,7 @@ private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
+             }
+             Text(
+                 "${formatInr(alert.previousAmount)} → ${formatInr(alert.newAmount)} (${if (up) "+" else "-"}$pct%)",
+-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                style = MaterialTheme.typography.bodySmall, color = MutedText
+             )
+             Spacer(modifier = Modifier.height(8.dp))
+             TextButton(onClick = onDismiss) { Text("Got it") }
+@@ -263,12 +263,12 @@ private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
+ 
+ @Composable
+ private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit, onDismiss: () -> Unit) {
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color(0xFFEDE7F6)) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = SemanticIndigo.copy(alpha = 0.12f)) {
+         Column(modifier = Modifier.padding(12.dp)) {
+             Text(suggestion.merchant, fontWeight = FontWeight.Medium)
+             Text(
+                 "~${formatInr(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
+-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                style = MaterialTheme.typography.bodySmall, color = MutedText
+             )
+             Spacer(modifier = Modifier.height(8.dp))
+             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+@@ -281,19 +281,19 @@ private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit,
+ 
+ @Composable
+ private fun ReminderRow(reminder: Reminder, onDelete: () -> Unit) {
+-    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
+         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+-            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFE3F2FD)), contentAlignment = Alignment.Center) {
+-                Text("${reminder.dueDayOfMonth}", fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
++            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(SemanticIndigo.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
++                Text("${reminder.dueDayOfMonth}", fontWeight = FontWeight.SemiBold, color = SemanticIndigo)
+             }
+             Spacer(modifier = Modifier.width(12.dp))
+             Column(modifier = Modifier.weight(1f)) {
+                 Text(reminder.title, fontWeight = FontWeight.Medium)
+                 Text(
+                     "Due day ${reminder.dueDayOfMonth} of month" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
+-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                    style = MaterialTheme.typography.bodySmall, color = MutedText
+                 )
+-                if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = MutedText)
+             }
+             IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "Delete reminder", tint = SemanticGray) }
+         }
+diff --git a/app/src/main/java/com/expensetracker/ui/SettingsScreen.kt b/app/src/main/java/com/expensetracker/ui/SettingsScreen.kt
+index 1ce1aaf..a5740b5 100644
+--- a/app/src/main/java/com/expensetracker/ui/SettingsScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/SettingsScreen.kt
+@@ -81,6 +81,7 @@ import com.autoexpensetracker.review.ReviewHelper
+ import com.autoexpensetracker.review.ReviewPromptStore
+ import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+ import com.autoexpensetracker.ui.theme.BrandGreen
++import com.autoexpensetracker.ui.theme.MutedText
+ import com.autoexpensetracker.ui.theme.SemanticRed
+ import com.autoexpensetracker.ui.theme.SemanticOrange
+ import com.autoexpensetracker.ui.theme.SemanticGray
+@@ -133,7 +134,7 @@ internal fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, on
+                     style = MaterialTheme.typography.bodyMedium
+                 )
+                 Spacer(modifier = Modifier.height(12.dp))
+-                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0)) {
++                Surface(shape = RoundedCornerShape(8.dp), color = SemanticOrange.copy(alpha = 0.12f)) {
+                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+                         Icon(Icons.Filled.Warning, contentDescription = null, tint = SemanticOrange, modifier = Modifier.size(18.dp))
+                         Spacer(modifier = Modifier.width(8.dp))
+@@ -204,7 +205,7 @@ internal fun ImportStatementDialog(
+                 Spacer(modifier = Modifier.height(8.dp))
+                 Text(
+                     "Transactions that look like ones already captured from a notification (same date, amount, and direction) are skipped automatically.",
+-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                    style = MaterialTheme.typography.bodySmall, color = MutedText
+                 )
+             }
+         },
+@@ -263,7 +264,7 @@ internal fun SettingsScreen(
+ 
+     LazyColumn(contentPadding = PaddingValues(16.dp)) {
+         item {
+-            Text("Membership", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Membership", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(8.dp))
+         }
+         item {
+@@ -278,7 +279,7 @@ internal fun SettingsScreen(
+         }
+ 
+         item {
+-            Text("Appearance", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Appearance", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(8.dp))
+         }
+         item {
+@@ -308,7 +309,7 @@ internal fun SettingsScreen(
+         }
+ 
+         item {
+-            Text("Security", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Security", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(8.dp))
+         }
+         item {
+@@ -326,7 +327,7 @@ internal fun SettingsScreen(
+         }
+ 
+         item {
+-            Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(8.dp))
+         }
+         // Backup & Restore and CSV Export are Pro-only (REQUIREMENTS.md
+@@ -399,7 +400,7 @@ internal fun SettingsScreen(
+ 
+         item {
+             val context = LocalContext.current
+-            Text("Support", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Support", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(8.dp))
+             SettingsRow(
+                 icon = Icons.Filled.Star,
+@@ -433,13 +434,13 @@ internal fun SettingsScreen(
+         }
+ 
+         item {
+-            Text("About", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("About", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(8.dp))
+-            Text("Expense Tracker v$versionName", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++            Text("Expense Tracker v$versionName", style = MaterialTheme.typography.bodySmall, color = MutedText)
+             Spacer(modifier = Modifier.height(4.dp))
+             Text(
+                 "Your transactions, budgets, and reminders stay on this device and are never transmitted anywhere. Subscriptions, ads, and app updates use Google's own services.",
+-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                style = MaterialTheme.typography.bodySmall, color = MutedText
+             )
+             if (!isPro && canRequestAds) {
+                 Spacer(modifier = Modifier.height(20.dp))
+@@ -479,13 +480,13 @@ private fun SettingsRow(
+     onClick: () -> Unit,
+     tint: Color = SemanticIndigo
+ ) {
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, onClick = onClick) {
+         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+             Spacer(modifier = Modifier.width(14.dp))
+             Column(modifier = Modifier.weight(1f)) {
+                 Text(title, fontWeight = FontWeight.Medium)
+-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MutedText)
+             }
+             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = SemanticGray)
+         }
+@@ -501,13 +502,13 @@ private fun SettingsToggleRow(
+     enabled: Boolean,
+     onCheckedChange: (Boolean) -> Unit
+ ) {
+-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
++    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
+         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+             Icon(icon, contentDescription = null, tint = if (enabled) SemanticIndigo else SemanticGray, modifier = Modifier.size(22.dp))
+             Spacer(modifier = Modifier.width(14.dp))
+             Column(modifier = Modifier.weight(1f)) {
+                 Text(title, fontWeight = FontWeight.Medium, color = if (enabled) Color.Unspecified else SemanticGray)
+-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MutedText)
+             }
+             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+         }
+@@ -555,7 +556,7 @@ internal fun LockScreen(onUnlockClick: () -> Unit) {
+             Spacer(modifier = Modifier.height(4.dp))
+             Text(
+                 "Verify it's you to view your transactions",
+-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                style = MaterialTheme.typography.bodySmall, color = MutedText
+             )
+             Spacer(modifier = Modifier.height(24.dp))
+             Button(onClick = onUnlockClick) {
+@@ -584,7 +585,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
+                 if (products.isEmpty()) {
+                     Text(
+                         "Subscription options aren't available right now. This may mean the app hasn't been published with Pro products configured yet.",
+-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray
++                        style = MaterialTheme.typography.bodySmall, color = MutedText
+                     )
+                 } else {
+                     // Yearly first, and visually distinguished with a "Best
+@@ -604,7 +605,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
+                         Surface(
+                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                             shape = RoundedCornerShape(12.dp),
+-                            color = if (isYearly) Color(0xFFEDF7ED) else Color(0xFFF7F7F9),
++                            color = if (isYearly) BrandGreen.copy(alpha = 0.12f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
+                             border = if (isYearly) BorderStroke(1.dp, BrandGreen) else null,
+                             onClick = { onSelectProduct(product) }
+                         ) {
+@@ -623,7 +624,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
+                                     Text(if (isYearly) "Yearly" else "Monthly", fontWeight = FontWeight.Medium)
+                                     Column(horizontalAlignment = Alignment.End) {
+                                         Text(price, fontWeight = FontWeight.SemiBold)
+-                                        Text(period, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
++                                        Text(period, style = MaterialTheme.typography.labelSmall, color = MutedText)
+                                     }
+                                 }
+                             }
+@@ -683,7 +684,7 @@ internal fun ManageSubscriptionDialog(
+                     }
+                     Text(
+                         "Takes effect immediately; any remaining time on your current plan is credited toward the new one.",
+-                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
++                        style = MaterialTheme.typography.labelSmall, color = MutedText,
+                         modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                     )
+                 }
+@@ -693,7 +694,7 @@ internal fun ManageSubscriptionDialog(
+                 }
+                 Text(
+                     "Opens Google Play's own subscription screen — the only place cancellation happens, so it's always fully in your control.",
+-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
++                    style = MaterialTheme.typography.labelSmall, color = MutedText,
+                     modifier = Modifier.padding(top = 4.dp)
+                 )
+             }
+@@ -797,7 +798,7 @@ private fun CaptureStatusLine(label: String, value: String) {
+         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+         horizontalArrangement = Arrangement.SpaceBetween
+     ) {
+-        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
++        Text(label, style = MaterialTheme.typography.bodySmall, color = MutedText, modifier = Modifier.weight(1f))
+         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+     }
+ }
+diff --git a/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt b/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt
+index 1c13319..ceda701 100644
+--- a/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt
++++ b/app/src/main/java/com/expensetracker/ui/TransactionsScreen.kt
+@@ -68,7 +68,6 @@ import com.autoexpensetracker.util.MonthTotals
+ import com.autoexpensetracker.util.PeriodBreakdown
+ import com.autoexpensetracker.util.SummaryPeriod
+ import com.autoexpensetracker.util.SummaryPeriodStore
+-import com.autoexpensetracker.ads.BannerAdView
+ import com.autoexpensetracker.ads.ConsentManager
+ import com.autoexpensetracker.billing.BillingManager
+ import com.autoexpensetracker.update.AppUpdateHelper
+@@ -76,6 +75,7 @@ import com.autoexpensetracker.review.ReviewHelper
+ import com.autoexpensetracker.review.ReviewPromptStore
+ import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
+ import com.autoexpensetracker.ui.theme.BrandGreen
++import com.autoexpensetracker.ui.theme.MutedText
+ import com.autoexpensetracker.ui.theme.SemanticRed
+ import com.autoexpensetracker.ui.theme.SemanticOrange
+ import com.autoexpensetracker.ui.theme.SemanticGray
+@@ -130,8 +130,6 @@ internal fun TransactionsScreen(
+     allTransactions: List<Transaction>,
+     notificationAccessGranted: Boolean,
+     onEnableNotificationAccess: () -> Unit,
+-    isPro: Boolean,
+-    canRequestAds: Boolean,
+     onSeeAllMonths: () -> Unit
+ ) {
+     val scope = rememberCoroutineScope()
+@@ -164,18 +162,6 @@ internal fun TransactionsScreen(
+     fun toggleReceived() { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
+ 
+     Column(modifier = Modifier.fillMaxSize()) {
+-        // Banner ad at the TOP — the "extra space" the search/filter chrome
+-        // used to occupy (REQUIREMENTS.md ยง2.20). A second banner stays at
+-        // the BOTTOM too (2026-09-03 fix, restoring what ยง2.18 originally
+-        // specified) — the month-scoped list is short enough now that both
+-        // fit comfortably, and there's no reason to give up that ad slot
+-        // just because the top one exists. Free users only, and only once
+-        // UMP consent is resolved (ยง2.23) — canRequestAds stays false until
+-        // then, so no ad request (real or test) fires before consent is
+-        // gathered where required.
+-        if (!isPro && canRequestAds) {
+-            BannerAdView()
+-        }
+ 
+         if (!notificationAccessGranted) {
+             OnboardingBanner(onEnableClick = onEnableNotificationAccess)
+@@ -204,10 +190,6 @@ internal fun TransactionsScreen(
+                 }
+             }
+         }
+-
+-        if (!isPro && canRequestAds) {
+-            BannerAdView()
+-        }
+     }
+ 
+     selectedTransaction?.let { tx ->
+@@ -478,7 +460,7 @@ internal fun MonthlyHistoryScreen(
+                 )
+                 if (dayTransactionsUnfiltered.isEmpty()) {
+                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+-                        Text("No transactions on ${selectedDay.label()}", color = Color.Gray)
++                        Text("No transactions on ${selectedDay.label()}", color = MutedText)
+                     }
+                 } else {
+                     NetSummaryCard(
+@@ -489,7 +471,7 @@ internal fun MonthlyHistoryScreen(
+                     )
+                     if (dayTransactions.isEmpty()) {
+                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+-                            Text("No transactions match this filter", color = Color.Gray)
++                            Text("No transactions match this filter", color = MutedText)
+                         }
+                     } else {
+                         Box(modifier = Modifier.weight(1f)) {
+@@ -512,7 +494,7 @@ internal fun MonthlyHistoryScreen(
+                 )
+                 if (monthTransactionsUnfiltered.isEmpty()) {
+                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+-                        Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
++                        Text("No transactions in ${selectedMonth.label()}", color = MutedText)
+                     }
+                 } else {
+                     NetSummaryCard(
+@@ -523,7 +505,7 @@ internal fun MonthlyHistoryScreen(
+                     )
+                     if (monthTransactions.isEmpty()) {
+                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+-                            Text("No transactions match this filter", color = Color.Gray)
++                            Text("No transactions match this filter", color = MutedText)
+                         }
+                     } else {
+                         Box(modifier = Modifier.weight(1f)) {
+@@ -545,7 +527,7 @@ internal fun MonthlyHistoryScreen(
+                 )
+                 if (yearBreakdown.all { it.count == 0 }) {
+                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+-                        Text("No transactions in ${selectedMonth.yearLabel()}", color = Color.Gray)
++                        Text("No transactions in ${selectedMonth.yearLabel()}", color = MutedText)
+                     }
+                 } else {
+                     Box(modifier = Modifier.weight(1f)) {
+@@ -640,7 +622,7 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
+         item {
+             YearRow(
+                 monthLabel = "Month", received = "Received", sent = "Sent", net = "Net",
+-                receivedColor = Color.Gray, sentColor = Color.Gray, netColor = Color.Gray,
++                receivedColor = MutedText, sentColor = MutedText, netColor = MutedText,
+                 bold = false, muted = true, sentFraction = 0f, background = Color.Transparent
+             )
+         }
+@@ -652,7 +634,7 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
+                 sent = formatInrWhole(totalSent),
+                 net = signedWhole(totalNet),
+                 receivedColor = BrandGreen, sentColor = SemanticRed, netColor = netColorFor(totalNet),
+-                bold = true, muted = false, sentFraction = 0f, background = Color(0xFFEDEDF2)
++                bold = true, muted = false, sentFraction = 0f, background = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+             )
+         }
+         items(visible) { row ->
+@@ -663,9 +645,9 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
+                     received = if (has) formatInrWhole(row.received) else "—",
+                     sent = if (has) formatInrWhole(row.sent) else "—",
+                     net = if (has) signedWhole(row.net) else "—",
+-                    receivedColor = if (has) BrandGreen else Color.Gray,
+-                    sentColor = if (has) SemanticRed else Color.Gray,
+-                    netColor = if (has) netColorFor(row.net) else Color.Gray,
++                    receivedColor = if (has) BrandGreen else MutedText,
++                    sentColor = if (has) SemanticRed else MutedText,
++                    netColor = if (has) netColorFor(row.net) else MutedText,
+                     bold = false, muted = !has,
+                     sentFraction = if (has && maxSent > 0.0) (row.sent / maxSent).toFloat() else 0f,
+                     background = Color.Transparent
+@@ -678,10 +660,11 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
+ private fun signedWhole(net: Double): String =
+     "${if (net >= 0) "+" else "−"}${formatInrWhole(kotlin.math.abs(net))}"
+ 
++@Composable
+ private fun netColorFor(net: Double): Color = when {
+     net > 0.0 -> BrandGreen
+     net < 0.0 -> SemanticRed
+-    else -> Color.Gray
++    else -> MutedText
+ }
+ 
+ @Composable
+@@ -708,7 +691,7 @@ private fun YearRow(
+                 monthLabel, modifier = Modifier.weight(0.8f),
+                 style = MaterialTheme.typography.bodyMedium,
+                 fontWeight = if (bold || !muted) FontWeight.SemiBold else FontWeight.Normal,
+-                color = if (muted) Color.Gray else Color.Unspecified
++                color = if (muted) MutedText else Color.Unspecified
+             )
+             YearCell(received, receivedColor, weight, Modifier.weight(1.1f))
+             YearCell(sent, sentColor, weight, Modifier.weight(1.1f))
+@@ -725,7 +708,7 @@ private fun YearRow(
+                     .background(SemanticRed.copy(alpha = 0.35f))
+             )
+         }
+-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE6E6EC)))
++        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)))
+     }
+ }
+ 
+@@ -741,7 +724,7 @@ private fun YearCell(text: String, color: Color, weight: FontWeight, modifier: M
+ @Composable
+ private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (SummaryPeriod) -> Unit) {
+     Row(
+-        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0xFFEDEDF2)).padding(4.dp),
++        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)).padding(4.dp),
+         horizontalArrangement = Arrangement.spacedBy(4.dp)
+     ) {
+         listOf(
+@@ -752,7 +735,7 @@ private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (Summar
+             val selected = period == p
+             Surface(
+                 shape = RoundedCornerShape(16.dp),
+-                color = if (selected) Color.White else Color.Transparent,
++                color = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                 onClick = { onPeriodChange(p) }
+             ) {
+                 Text(
+@@ -760,7 +743,7 @@ private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (Summar
+                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
+                     style = MaterialTheme.typography.labelLarge,
+                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+-                    color = if (selected) Color.Black else Color.Gray
++                    color = if (selected) MaterialTheme.colorScheme.onSurface else MutedText
+                 )
+             }
+         }
+@@ -990,23 +973,23 @@ private fun FilterBottomSheet(
+             }
+             Spacer(modifier = Modifier.height(12.dp))
+ 
+-            Text("Type", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Type", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(6.dp))
+             FlowChipsRow(DirectionFilter.entries, directionFilter, { it.label }, onDirectionChange)
+ 
+             Spacer(modifier = Modifier.height(16.dp))
+-            Text("Date", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Date", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(6.dp))
+             FlowChipsRow(DateFilter.entries, dateFilter, { it.label }) {
+                 if (it == DateFilter.CUSTOM) onPickCustomRange() else onDateChange(it)
+             }
+             if (dateFilter == DateFilter.CUSTOM && customFrom != null && customTo != null) {
+                 Spacer(modifier = Modifier.height(4.dp))
+-                Text("${shortDate(customFrom)} - ${shortDate(customTo)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                Text("${shortDate(customFrom)} - ${shortDate(customTo)}", style = MaterialTheme.typography.bodySmall, color = MutedText)
+             }
+ 
+             Spacer(modifier = Modifier.height(16.dp))
+-            Text("Category", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
++            Text("Category", style = MaterialTheme.typography.labelLarge, color = MutedText)
+             Spacer(modifier = Modifier.height(6.dp))
+             FlowChipsRow(
+                 listOf<Category?>(null) + Category.entries,
+@@ -1034,7 +1017,7 @@ private fun <T> FlowChipsRow(options: List<T>, selected: T, labelOf: (T) -> Stri
+ private fun NeedsReviewBanner(count: Int, onClick: () -> Unit) {
+     Surface(
+         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+-        shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF3E0), onClick = onClick
++        shape = RoundedCornerShape(14.dp), color = SemanticOrange.copy(alpha = 0.12f), onClick = onClick
+     ) {
+         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+             Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = SemanticOrange)
+@@ -1053,7 +1036,7 @@ private fun NeedsReviewBanner(count: Int, onClick: () -> Unit) {
+ 
+ @Composable
+ private fun OnboardingBanner(onEnableClick: () -> Unit) {
+-    Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), color = Color(0xFFFFF3E0)) {
++    Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), color = SemanticOrange.copy(alpha = 0.12f)) {
+         Column(modifier = Modifier.padding(16.dp)) {
+             Row(verticalAlignment = Alignment.CenterVertically) {
+                 Icon(Icons.Filled.Warning, contentDescription = null, tint = SemanticOrange)
+@@ -1082,7 +1065,7 @@ private fun EmptyState(showHint: Boolean) {
+                 Spacer(modifier = Modifier.height(4.dp))
+                 Text(
+                     "New bank/UPI alerts will show up here automatically. Tap + to add a cash expense.",
+-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
++                    style = MaterialTheme.typography.bodySmall, color = MutedText,
+                     modifier = Modifier.padding(horizontal = 32.dp)
+                 )
+             }
+@@ -1097,7 +1080,7 @@ private fun NoResultsState() {
+             Icon(Icons.Filled.SearchOff, contentDescription = null, modifier = Modifier.size(40.dp), tint = SemanticGray)
+             Spacer(modifier = Modifier.height(8.dp))
+             Text("No matching transactions", style = MaterialTheme.typography.titleSmall)
+-            Text("Try a different search or filter.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++            Text("Try a different search or filter.", style = MaterialTheme.typography.bodySmall, color = MutedText)
+         }
+     }
+ }
+@@ -1121,11 +1104,11 @@ private fun SummaryHeader(
+ private fun StatCard(label: String, amount: Double, color: Color, isActive: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+     Surface(
+         modifier = modifier, shape = RoundedCornerShape(12.dp),
+-        color = if (isActive) color.copy(alpha = 0.12f) else Color.White,
++        color = if (isActive) color.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
+         onClick = onClick
+     ) {
+         Column(modifier = Modifier.padding(12.dp)) {
+-            Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
++            Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+             Text(
+                 "${formatInr(amount)}",
+                 style = MaterialTheme.typography.titleMedium,
+@@ -1175,7 +1158,7 @@ private fun NetSummaryCard(
+             color = netColor.copy(alpha = 0.12f)
+         ) {
+             Column(modifier = Modifier.padding(12.dp)) {
+-                Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
++                Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
+                 Text(
+                     "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
+                     style = MaterialTheme.typography.titleMedium,
+@@ -1244,7 +1227,7 @@ private fun DayHeader(label: String, net: Double) {
+     val netColor = when {
+         net > 0.0 -> BrandGreen
+         net < 0.0 -> SemanticRed
+-        else -> Color.Gray
++        else -> MutedText
+     }
+     Row(
+         // end = 28.dp lines the net up with the amount column of the rows below
+@@ -1253,7 +1236,7 @@ private fun DayHeader(label: String, net: Double) {
+         horizontalArrangement = Arrangement.SpaceBetween,
+         verticalAlignment = Alignment.CenterVertically
+     ) {
+-        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
++        Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText)
+         Text(
+             "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
+             style = MaterialTheme.typography.labelMedium,
+@@ -1266,12 +1249,12 @@ private fun DayHeader(label: String, net: Double) {
+ @Composable
+ internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onClick: () -> Unit) {
+     val isSent = tx.direction == Direction.SENT
+-    val iconBg = when { tx.needsReview -> Color(0xFFFFF3E0); isSent -> Color(0xFFFFEBEE); else -> Color(0xFFE8F5E9) }
++    val iconBg = when { tx.needsReview -> SemanticOrange.copy(alpha = 0.12f); isSent -> SemanticRed.copy(alpha = 0.12f); else -> BrandGreen.copy(alpha = 0.12f) }
+     val iconTint = when { tx.needsReview -> SemanticOrange; isSent -> SemanticRed; else -> BrandGreen }
+     val icon = when { tx.needsReview -> Icons.Filled.PriorityHigh; isSent -> Icons.Filled.ArrowUpward; else -> Icons.Filled.ArrowDownward }
+     val category = Category.fromNameOrNull(tx.category)
+ 
+-    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
++    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, onClick = onClick) {
+         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+             Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(iconBg), contentAlignment = Alignment.Center) {
+                 Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+@@ -1284,9 +1267,9 @@ internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onCli
+                 }
+                 Text(
+                     "${tx.bankOrSource} • ${timeFormat.format(Date(tx.timestampMillis))}" + if (tx.needsReview) " • Needs review" else "",
+-                    style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) SemanticOrange else Color.Gray
++                    style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) SemanticOrange else MutedText
+                 )
+-                if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 1)
++                if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = MutedText, maxLines = 1)
+             }
+             Text("${if (isSent) "-" else "+"}${formatInr(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
+         }
+@@ -1369,7 +1352,7 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
+         text = {
+             Column {
+                 if (transaction.needsReview) {
+-                    Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0), modifier = Modifier.fillMaxWidth()) {
++                    Surface(shape = RoundedCornerShape(8.dp), color = SemanticOrange.copy(alpha = 0.12f), modifier = Modifier.fillMaxWidth()) {
+                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+                             Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = SemanticOrange, modifier = Modifier.size(16.dp))
+                             Spacer(modifier = Modifier.width(8.dp))
+@@ -1395,9 +1378,9 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
+                     )
+                     Spacer(modifier = Modifier.height(12.dp))
+                 } else {
+-                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
++                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = MutedText)
+                     if (transaction.balanceAfter != null) {
+-                        Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
++                        Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = MutedText)
+                     }
+                     Spacer(modifier = Modifier.height(12.dp))
+                 }
+diff --git a/app/src/main/java/com/expensetracker/ui/theme/Color.kt b/app/src/main/java/com/expensetracker/ui/theme/Color.kt
+index 488b36e..03d4081 100644
+--- a/app/src/main/java/com/expensetracker/ui/theme/Color.kt
++++ b/app/src/main/java/com/expensetracker/ui/theme/Color.kt
+@@ -1,5 +1,7 @@
+ package com.autoexpensetracker.ui.theme
+ 
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.runtime.Composable
+ import androidx.compose.ui.graphics.Color
+ 
+ /**
+@@ -45,4 +47,13 @@ val BackgroundDark = Color(0xFF141614)
+ // pure black (#000000) achieves; a dark-but-not-black tone like
+ // BackgroundDark still lights every pixel, just dimly.
+ val AmoledBlack = Color(0xFF000000)
+-val AmoledSurface = Color(0xFF0A0A0A)     // a hair above pure black for cards, so they're still visually distinct from the page background
+\ No newline at end of file
++val AmoledSurface = Color(0xFF0A0A0A)     // a hair above pure black for cards, so they're still visually distinct from the page background
++
++/**
++ * Secondary / caption text. Replaces the hardcoded `Color.Gray`, which was the
++ * same mid-gray in every theme: too faint on white in some places and glaring
++ * on dark in others. Derived from the theme's own text colour, so it follows
++ * Light, Dark and AMOLED.
++ */
++val MutedText: Color
++    @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+diff --git a/app/src/main/java/com/expensetracker/util/ChartMath.kt b/app/src/main/java/com/expensetracker/util/ChartMath.kt
+new file mode 100644
+index 0000000..7f53829
+--- /dev/null
++++ b/app/src/main/java/com/expensetracker/util/ChartMath.kt
+@@ -0,0 +1,79 @@
++package com.autoexpensetracker.util
++
++import java.util.Calendar
++
++/**
++ * Pure arithmetic behind the Charts screen, kept free of Android and Compose
++ * types so it can be compiled and tested on its own.
++ */
++object ChartMath {
++
++    /** Number of days in the given month (month is Calendar.JANUARY..DECEMBER, 0-based). */
++    fun daysInMonth(year: Int, month: Int): Int {
++        val cal = Calendar.getInstance()
++        cal.clear()
++        cal.set(year, month, 1)
++        return cal.getActualMaximum(Calendar.DAY_OF_MONTH)
++    }
++
++    /**
++     * Total per day-of-month. Index 0 is day 1. [points] are (timestampMillis,
++     * amount) pairs; anything outside the given month is ignored, so callers
++     * can pass a wider list.
++     */
++    fun dailyTotals(points: List<Pair<Long, Double>>, year: Int, month: Int): DoubleArray {
++        val totals = DoubleArray(daysInMonth(year, month))
++        val cal = Calendar.getInstance()
++        for (p in points) {
++            cal.timeInMillis = p.first
++            if (cal.get(Calendar.YEAR) != year || cal.get(Calendar.MONTH) != month) continue
++            val idx = cal.get(Calendar.DAY_OF_MONTH) - 1
++            if (idx in totals.indices) totals[idx] += p.second
++        }
++        return totals
++    }
++
++    /**
++     * How many days of the month have happened so far: today's day-of-month
++     * for the current month, the full length for any past month, and 0 for a
++     * future month. Used as the divisor for "daily average".
++     */
++    fun elapsedDays(year: Int, month: Int, nowMillis: Long): Int {
++        val now = Calendar.getInstance()
++        now.timeInMillis = nowMillis
++        val ny = now.get(Calendar.YEAR)
++        val nm = now.get(Calendar.MONTH)
++        return when {
++            year > ny || (year == ny && month > nm) -> 0
++            year == ny && month == nm -> now.get(Calendar.DAY_OF_MONTH)
++            else -> daysInMonth(year, month)
++        }
++    }
++
++    fun dailyAverage(total: Double, elapsedDays: Int): Double =
++        if (elapsedDays <= 0) 0.0 else total / elapsedDays
++
++    /** Index of the largest value, or -1 if there is no positive value. */
++    fun peakIndex(values: DoubleArray): Int {
++        var best = -1
++        var bestValue = 0.0
++        for (i in values.indices) {
++            if (values[i] > bestValue) { bestValue = values[i]; best = i }
++        }
++        return best
++    }
++
++    /** value / max as a 0..1 fraction, never below [minVisible] for a non-zero value so a small bar is still visible. */
++    fun barFraction(value: Double, max: Double, minVisible: Float = 0.02f): Float {
++        if (max <= 0.0 || value <= 0.0) return 0f
++        val f = (value / max).toFloat()
++        return if (f < minVisible) minVisible else if (f > 1f) 1f else f
++    }
++
++    /** Share label: "<1%" for a tiny non-zero share, otherwise a whole-number percent. */
++    fun percentLabel(amount: Double, total: Double): String {
++        if (total <= 0.0 || amount <= 0.0) return "0%"
++        val pct = amount / total * 100.0
++        return if (pct < 1.0) "<1%" else "${pct.toInt()}%"
++    }
++}

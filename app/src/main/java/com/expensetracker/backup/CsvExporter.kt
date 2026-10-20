@@ -5,20 +5,27 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Builds a CSV file from transactions, for opening in Excel/Sheets — a
- * distinct use case from BackupPayload's JSON (which is for restoring into
- * this app). CSV drops reminders/budgets and flattens categories/direction
- * to plain text; it is not meant to be re-imported.
+ * Builds a CSV file from transactions, for opening in Excel/Sheets and for
+ * moving transaction history to another phone: `OwnCsv` (importer package)
+ * reads this exact layout back with every column intact. It carries
+ * transactions only; reminders, budgets and manual balances travel in the
+ * JSON backup (BackupPayload).
+ *
+ * Dates, times and numbers are written with a fixed locale (US), so a phone
+ * set to a language that uses other digits or a decimal comma still writes a
+ * file that reads back. The last column is the exact timestamp in epoch
+ * milliseconds: it survives a change of time zone between the two phones,
+ * which the local Date and Time columns cannot.
  */
 object CsvExporter {
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
     fun toCsv(transactions: List<Transaction>): String {
         val header = listOf(
             "Date", "Time", "Direction", "Amount", "Merchant", "Bank/Source",
-            "Category", "Note", "Tags", "Balance After", "Needs Review"
+            "Category", "Note", "Tags", "Balance After", "Needs Review", "Timestamp (ms)"
         ).joinToString(",")
 
         val rows = transactions.sortedByDescending { it.timestampMillis }.map { tx ->
@@ -27,14 +34,15 @@ object CsvExporter {
                 dateFormat.format(date),
                 timeFormat.format(date),
                 tx.direction.name,
-                "%.2f".format(tx.amount),
+                "%.2f".format(Locale.US, tx.amount),
                 neutralizeFormula(tx.merchantOrContact.orEmpty()),
                 neutralizeFormula(tx.bankOrSource),
                 neutralizeFormula(tx.category.orEmpty()),
                 neutralizeFormula(tx.note.orEmpty()),
                 neutralizeFormula(tx.tags.orEmpty()),
-                tx.balanceAfter?.let { "%.2f".format(it) } ?: "",
-                if (tx.needsReview) "Yes" else "No"
+                tx.balanceAfter?.let { "%.2f".format(Locale.US, it) } ?: "",
+                if (tx.needsReview) "Yes" else "No",
+                tx.timestampMillis.toString()
             ).joinToString(",") { escapeCsvField(it) }
         }
 

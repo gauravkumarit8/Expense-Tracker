@@ -15,9 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingFlat
@@ -44,6 +41,7 @@ import com.autoexpensetracker.data.Reminder
 import com.autoexpensetracker.data.ReminderDao
 import com.autoexpensetracker.data.Transaction
 import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticGray
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.util.MonthRange
@@ -200,24 +198,13 @@ internal fun DashboardScreen(
         ) {
             item {
                 Column {
-                    Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+                    Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = MutedText)
                     Text(monthRange.label(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 }
             }
 
             item {
                 MonthSummaryHeroCard(spent = spent, received = received, net = net, onClick = onSeeCharts)
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    QuickActionChip("Charts", Icons.Filled.BarChart, Modifier.weight(1f), onSeeCharts)
-                    QuickActionChip("Budgets", Icons.Filled.PieChart, Modifier.weight(1f), onSeeBudgets)
-                    QuickActionChip("Reminders", Icons.Filled.NotificationsActive, Modifier.weight(1f), onSeeReminders)
-                }
             }
 
             item {
@@ -279,9 +266,9 @@ internal fun DashboardScreen(
                             onAction = onAddTransaction
                         )
                     } else {
-                        Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 1.dp) {
+                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
                             Column {
-                                recentTransactions.forEach { tx -> TransactionRow(tx, timeFormat, onClick = {}) }
+                                recentTransactions.forEach { tx -> TransactionRow(tx, timeFormat, onClick = onSeeAllTransactions) }
                             }
                         }
                     }
@@ -305,22 +292,22 @@ private fun TodaySpendCard(
     // stock price, which is intentional: this is a spend tracker, not an
     // investment tracker, and less spending is the desired direction.
     val (trendIcon, trendColor, trendText) = when {
-        comparisonSpend <= 0.0 && todaySpend <= 0.0 -> Triple(Icons.Filled.TrendingFlat, Color.Gray, "No spending yet")
+        comparisonSpend <= 0.0 && todaySpend <= 0.0 -> Triple(Icons.Filled.TrendingFlat, MutedText, "No spending yet")
         comparisonSpend <= 0.0 -> Triple(Icons.Filled.TrendingUp, SemanticRed, "No spend that day to compare")
         else -> {
             val percent = ((todaySpend - comparisonSpend) / comparisonSpend) * 100
             when {
                 percent > 0.5 -> Triple(Icons.Filled.TrendingUp, SemanticRed, "+${"%.0f".format(percent)}% ${comparisonPeriod.label}")
                 percent < -0.5 -> Triple(Icons.Filled.TrendingDown, MaterialTheme.colorScheme.primary, "${"%.0f".format(percent)}% ${comparisonPeriod.label}")
-                else -> Triple(Icons.Filled.TrendingFlat, Color.Gray, "About the same ${comparisonPeriod.label}")
+                else -> Triple(Icons.Filled.TrendingFlat, MutedText, "About the same ${comparisonPeriod.label}")
             }
         }
     }
 
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Today", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+                Text("Today", style = MaterialTheme.typography.labelLarge, color = MutedText)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     SpendComparisonPeriod.entries.forEach { period ->
                         FilterChip(
@@ -337,9 +324,9 @@ private fun TodaySpendCard(
             val netColor = when {
                 todayNet > 0.0 -> BrandGreen
                 todayNet < 0.0 -> SemanticRed
-                else -> Color.Gray
+                else -> MutedText
             }
-            Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+            Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
             Text(
                 "${if (todayNet >= 0) "+" else "−"}${formatInr(kotlin.math.abs(todayNet))}",
                 style = MaterialTheme.typography.headlineSmall,
@@ -368,7 +355,7 @@ private fun TodaySpendCard(
 @Composable
 private fun TodayStat(label: String, amount: Double, color: Color) {
     Column {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText)
         Text(
             formatInr(amount),
             style = MaterialTheme.typography.titleMedium,
@@ -396,12 +383,12 @@ private fun SincePaydayCard(info: SinceLastSalary) {
     val spentFraction = if (info.amount > 0) (info.spentSince / info.amount).toFloat().coerceIn(0f, 1f) else 0f
     val dateFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
 
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 "Since your last salary credit",
                 style = MaterialTheme.typography.labelLarge,
-                color = Color.Gray
+                color = MutedText
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -413,13 +400,13 @@ private fun SincePaydayCard(info: SinceLastSalary) {
                     Text(formatInr(info.spentSince), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(
                         "spent of ${formatInr(info.amount)} received on ${dateFormat.format(Date(info.timestampMillis))}",
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                        style = MaterialTheme.typography.bodySmall, color = MutedText
                     )
                 }
                 Text(
                     "${info.daysSince}d ago",
                     style = MaterialTheme.typography.labelMedium,
-                    color = Color.Gray
+                    color = MutedText
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))
@@ -431,8 +418,9 @@ private fun SincePaydayCard(info: SinceLastSalary) {
             // a @Composable function" — this is exactly what broke the CI
             // build; see the decision log).
             val progressColor = MaterialTheme.colorScheme.primary
+            val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
             Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
-                drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
+                drawRoundRect(color = trackColor, cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
                 drawRoundRect(
                     color = if (spentFraction >= 1f) SemanticRed else progressColor,
                     size = size.copy(width = size.width * spentFraction),
@@ -443,7 +431,7 @@ private fun SincePaydayCard(info: SinceLastSalary) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     "Based on ${info.confirmedOccurrences} months so far — gets more reliable with more history.",
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray
+                    style = MaterialTheme.typography.labelSmall, color = MutedText
                 )
             }
         }
@@ -506,25 +494,6 @@ private fun HeroStat(label: String, amount: Double) {
 }
 
 @Composable
-private fun QuickActionChip(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        onClick = onClick
-    ) {
-        Column(
-            modifier = Modifier.padding(vertical = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(icon, contentDescription = label, tint = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-@Composable
 private fun DashboardSection(title: String, onSeeAll: () -> Unit, content: @Composable () -> Unit) {
     Column {
         Row(
@@ -576,14 +545,14 @@ private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
         fraction > 0.7f -> Color(0xFFF57C00)
         else -> MaterialTheme.colorScheme.primary
     }
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     "${formatInrWhole(spent)} / ${formatInrWhole(limit)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MutedText
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -601,7 +570,7 @@ private fun BudgetGlanceRow(category: Category, spent: Double, limit: Double) {
 
 @Composable
 private fun UpcomingReminderRow(reminder: Reminder) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
@@ -620,7 +589,7 @@ private fun UpcomingReminderRow(reminder: Reminder) {
                 Text(
                     "Due day ${reminder.dueDayOfMonth}" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MutedText
                 )
             }
             Icon(Icons.Filled.Receipt, contentDescription = null, tint = SemanticGray)

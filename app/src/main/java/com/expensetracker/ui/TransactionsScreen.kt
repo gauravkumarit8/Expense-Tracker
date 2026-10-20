@@ -68,7 +68,6 @@ import com.autoexpensetracker.util.MonthTotals
 import com.autoexpensetracker.util.PeriodBreakdown
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
-import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
@@ -76,6 +75,7 @@ import com.autoexpensetracker.review.ReviewHelper
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
 import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.ui.theme.SemanticOrange
 import com.autoexpensetracker.ui.theme.SemanticGray
@@ -130,8 +130,6 @@ internal fun TransactionsScreen(
     allTransactions: List<Transaction>,
     notificationAccessGranted: Boolean,
     onEnableNotificationAccess: () -> Unit,
-    isPro: Boolean,
-    canRequestAds: Boolean,
     onSeeAllMonths: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -164,18 +162,6 @@ internal fun TransactionsScreen(
     fun toggleReceived() { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Banner ad at the TOP — the "extra space" the search/filter chrome
-        // used to occupy (REQUIREMENTS.md ยง2.20). A second banner stays at
-        // the BOTTOM too (2026-09-03 fix, restoring what ยง2.18 originally
-        // specified) — the month-scoped list is short enough now that both
-        // fit comfortably, and there's no reason to give up that ad slot
-        // just because the top one exists. Free users only, and only once
-        // UMP consent is resolved (ยง2.23) — canRequestAds stays false until
-        // then, so no ad request (real or test) fires before consent is
-        // gathered where required.
-        if (!isPro && canRequestAds) {
-            BannerAdView()
-        }
 
         if (!notificationAccessGranted) {
             OnboardingBanner(onEnableClick = onEnableNotificationAccess)
@@ -203,10 +189,6 @@ internal fun TransactionsScreen(
                     }
                 }
             }
-        }
-
-        if (!isPro && canRequestAds) {
-            BannerAdView()
         }
     }
 
@@ -478,7 +460,7 @@ internal fun MonthlyHistoryScreen(
                 )
                 if (dayTransactionsUnfiltered.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("No transactions on ${selectedDay.label()}", color = Color.Gray)
+                        Text("No transactions on ${selectedDay.label()}", color = MutedText)
                     }
                 } else {
                     NetSummaryCard(
@@ -489,7 +471,7 @@ internal fun MonthlyHistoryScreen(
                     )
                     if (dayTransactions.isEmpty()) {
                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("No transactions match this filter", color = Color.Gray)
+                            Text("No transactions match this filter", color = MutedText)
                         }
                     } else {
                         Box(modifier = Modifier.weight(1f)) {
@@ -512,7 +494,7 @@ internal fun MonthlyHistoryScreen(
                 )
                 if (monthTransactionsUnfiltered.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("No transactions in ${selectedMonth.label()}", color = Color.Gray)
+                        Text("No transactions in ${selectedMonth.label()}", color = MutedText)
                     }
                 } else {
                     NetSummaryCard(
@@ -523,7 +505,7 @@ internal fun MonthlyHistoryScreen(
                     )
                     if (monthTransactions.isEmpty()) {
                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("No transactions match this filter", color = Color.Gray)
+                            Text("No transactions match this filter", color = MutedText)
                         }
                     } else {
                         Box(modifier = Modifier.weight(1f)) {
@@ -545,7 +527,7 @@ internal fun MonthlyHistoryScreen(
                 )
                 if (yearBreakdown.all { it.count == 0 }) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("No transactions in ${selectedMonth.yearLabel()}", color = Color.Gray)
+                        Text("No transactions in ${selectedMonth.yearLabel()}", color = MutedText)
                     }
                 } else {
                     Box(modifier = Modifier.weight(1f)) {
@@ -640,7 +622,7 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
         item {
             YearRow(
                 monthLabel = "Month", received = "Received", sent = "Sent", net = "Net",
-                receivedColor = Color.Gray, sentColor = Color.Gray, netColor = Color.Gray,
+                receivedColor = MutedText, sentColor = MutedText, netColor = MutedText,
                 bold = false, muted = true, sentFraction = 0f, background = Color.Transparent
             )
         }
@@ -652,7 +634,7 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
                 sent = formatInrWhole(totalSent),
                 net = signedWhole(totalNet),
                 receivedColor = BrandGreen, sentColor = SemanticRed, netColor = netColorFor(totalNet),
-                bold = true, muted = false, sentFraction = 0f, background = Color(0xFFEDEDF2)
+                bold = true, muted = false, sentFraction = 0f, background = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
             )
         }
         items(visible) { row ->
@@ -663,9 +645,9 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
                     received = if (has) formatInrWhole(row.received) else "—",
                     sent = if (has) formatInrWhole(row.sent) else "—",
                     net = if (has) signedWhole(row.net) else "—",
-                    receivedColor = if (has) BrandGreen else Color.Gray,
-                    sentColor = if (has) SemanticRed else Color.Gray,
-                    netColor = if (has) netColorFor(row.net) else Color.Gray,
+                    receivedColor = if (has) BrandGreen else MutedText,
+                    sentColor = if (has) SemanticRed else MutedText,
+                    netColor = if (has) netColorFor(row.net) else MutedText,
                     bold = false, muted = !has,
                     sentFraction = if (has && maxSent > 0.0) (row.sent / maxSent).toFloat() else 0f,
                     background = Color.Transparent
@@ -678,10 +660,11 @@ private fun YearBreakdown(rows: List<MonthTotals>, onMonthClick: (MonthRange) ->
 private fun signedWhole(net: Double): String =
     "${if (net >= 0) "+" else "−"}${formatInrWhole(kotlin.math.abs(net))}"
 
+@Composable
 private fun netColorFor(net: Double): Color = when {
     net > 0.0 -> BrandGreen
     net < 0.0 -> SemanticRed
-    else -> Color.Gray
+    else -> MutedText
 }
 
 @Composable
@@ -708,7 +691,7 @@ private fun YearRow(
                 monthLabel, modifier = Modifier.weight(0.8f),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (bold || !muted) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (muted) Color.Gray else Color.Unspecified
+                color = if (muted) MutedText else Color.Unspecified
             )
             YearCell(received, receivedColor, weight, Modifier.weight(1.1f))
             YearCell(sent, sentColor, weight, Modifier.weight(1.1f))
@@ -725,7 +708,7 @@ private fun YearRow(
                     .background(SemanticRed.copy(alpha = 0.35f))
             )
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE6E6EC)))
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)))
     }
 }
 
@@ -741,7 +724,7 @@ private fun YearCell(text: String, color: Color, weight: FontWeight, modifier: M
 @Composable
 private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (SummaryPeriod) -> Unit) {
     Row(
-        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0xFFEDEDF2)).padding(4.dp),
+        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         listOf(
@@ -752,7 +735,7 @@ private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (Summar
             val selected = period == p
             Surface(
                 shape = RoundedCornerShape(16.dp),
-                color = if (selected) Color.White else Color.Transparent,
+                color = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
                 onClick = { onPeriodChange(p) }
             ) {
                 Text(
@@ -760,7 +743,7 @@ private fun SegmentedPeriodToggle(period: SummaryPeriod, onPeriodChange: (Summar
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (selected) Color.Black else Color.Gray
+                    color = if (selected) MaterialTheme.colorScheme.onSurface else MutedText
                 )
             }
         }
@@ -990,23 +973,23 @@ private fun FilterBottomSheet(
             }
             Spacer(modifier = Modifier.height(12.dp))
 
-            Text("Type", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Type", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(6.dp))
             FlowChipsRow(DirectionFilter.entries, directionFilter, { it.label }, onDirectionChange)
 
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Date", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Date", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(6.dp))
             FlowChipsRow(DateFilter.entries, dateFilter, { it.label }) {
                 if (it == DateFilter.CUSTOM) onPickCustomRange() else onDateChange(it)
             }
             if (dateFilter == DateFilter.CUSTOM && customFrom != null && customTo != null) {
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("${shortDate(customFrom)} - ${shortDate(customTo)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("${shortDate(customFrom)} - ${shortDate(customTo)}", style = MaterialTheme.typography.bodySmall, color = MutedText)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Category", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Category", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(6.dp))
             FlowChipsRow(
                 listOf<Category?>(null) + Category.entries,
@@ -1034,7 +1017,7 @@ private fun <T> FlowChipsRow(options: List<T>, selected: T, labelOf: (T) -> Stri
 private fun NeedsReviewBanner(count: Int, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF3E0), onClick = onClick
+        shape = RoundedCornerShape(14.dp), color = SemanticOrange.copy(alpha = 0.12f), onClick = onClick
     ) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = SemanticOrange)
@@ -1053,7 +1036,7 @@ private fun NeedsReviewBanner(count: Int, onClick: () -> Unit) {
 
 @Composable
 private fun OnboardingBanner(onEnableClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), color = Color(0xFFFFF3E0)) {
+    Surface(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), color = SemanticOrange.copy(alpha = 0.12f)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Warning, contentDescription = null, tint = SemanticOrange)
@@ -1082,7 +1065,7 @@ private fun EmptyState(showHint: Boolean) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     "New bank/UPI alerts will show up here automatically. Tap + to add a cash expense.",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = MutedText,
                     modifier = Modifier.padding(horizontal = 32.dp)
                 )
             }
@@ -1097,7 +1080,7 @@ private fun NoResultsState() {
             Icon(Icons.Filled.SearchOff, contentDescription = null, modifier = Modifier.size(40.dp), tint = SemanticGray)
             Spacer(modifier = Modifier.height(8.dp))
             Text("No matching transactions", style = MaterialTheme.typography.titleSmall)
-            Text("Try a different search or filter.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("Try a different search or filter.", style = MaterialTheme.typography.bodySmall, color = MutedText)
         }
     }
 }
@@ -1121,11 +1104,11 @@ private fun SummaryHeader(
 private fun StatCard(label: String, amount: Double, color: Color, isActive: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
         modifier = modifier, shape = RoundedCornerShape(12.dp),
-        color = if (isActive) color.copy(alpha = 0.12f) else Color.White,
+        color = if (isActive) color.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
         onClick = onClick
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 "${formatInr(amount)}",
                 style = MaterialTheme.typography.titleMedium,
@@ -1175,7 +1158,7 @@ private fun NetSummaryCard(
             color = netColor.copy(alpha = 0.12f)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text("Net", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
                 Text(
                     "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
                     style = MaterialTheme.typography.titleMedium,
@@ -1244,7 +1227,7 @@ private fun DayHeader(label: String, net: Double) {
     val netColor = when {
         net > 0.0 -> BrandGreen
         net < 0.0 -> SemanticRed
-        else -> Color.Gray
+        else -> MutedText
     }
     Row(
         // end = 28.dp lines the net up with the amount column of the rows below
@@ -1253,7 +1236,7 @@ private fun DayHeader(label: String, net: Double) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText)
         Text(
             "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
             style = MaterialTheme.typography.labelMedium,
@@ -1266,12 +1249,12 @@ private fun DayHeader(label: String, net: Double) {
 @Composable
 internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onClick: () -> Unit) {
     val isSent = tx.direction == Direction.SENT
-    val iconBg = when { tx.needsReview -> Color(0xFFFFF3E0); isSent -> Color(0xFFFFEBEE); else -> Color(0xFFE8F5E9) }
+    val iconBg = when { tx.needsReview -> SemanticOrange.copy(alpha = 0.12f); isSent -> SemanticRed.copy(alpha = 0.12f); else -> BrandGreen.copy(alpha = 0.12f) }
     val iconTint = when { tx.needsReview -> SemanticOrange; isSent -> SemanticRed; else -> BrandGreen }
     val icon = when { tx.needsReview -> Icons.Filled.PriorityHigh; isSent -> Icons.Filled.ArrowUpward; else -> Icons.Filled.ArrowDownward }
     val category = Category.fromNameOrNull(tx.category)
 
-    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
+    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, onClick = onClick) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(iconBg), contentAlignment = Alignment.Center) {
                 Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
@@ -1284,9 +1267,9 @@ internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onCli
                 }
                 Text(
                     "${tx.bankOrSource} • ${timeFormat.format(Date(tx.timestampMillis))}" + if (tx.needsReview) " • Needs review" else "",
-                    style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) SemanticOrange else Color.Gray
+                    style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) SemanticOrange else MutedText
                 )
-                if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 1)
+                if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = MutedText, maxLines = 1)
             }
             Text("${if (isSent) "-" else "+"}${formatInr(tx.amount)}", fontWeight = FontWeight.SemiBold, color = if (isSent) SemanticRed else BrandGreen)
         }
@@ -1369,7 +1352,7 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
         text = {
             Column {
                 if (transaction.needsReview) {
-                    Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0), modifier = Modifier.fillMaxWidth()) {
+                    Surface(shape = RoundedCornerShape(8.dp), color = SemanticOrange.copy(alpha = 0.12f), modifier = Modifier.fillMaxWidth()) {
                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
                             Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = SemanticOrange, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -1395,9 +1378,9 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 } else {
-                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = MutedText)
                     if (transaction.balanceAfter != null) {
-                        Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = MutedText)
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                 }

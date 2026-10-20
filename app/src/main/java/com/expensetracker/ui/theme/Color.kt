@@ -1,5 +1,7 @@
 package com.autoexpensetracker.ui.theme
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -46,3 +48,12 @@ val BackgroundDark = Color(0xFF141614)
 // BackgroundDark still lights every pixel, just dimly.
 val AmoledBlack = Color(0xFF000000)
 val AmoledSurface = Color(0xFF0A0A0A)     // a hair above pure black for cards, so they're still visually distinct from the page background
+
+/**
+ * Secondary / caption text. Replaces the hardcoded `Color.Gray`, which was the
+ * same mid-gray in every theme: too faint on white in some places and glaring
+ * on dark in others. Derived from the theme's own text colour, so it follows
+ * Light, Dark and AMOLED.
+ */
+val MutedText: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
