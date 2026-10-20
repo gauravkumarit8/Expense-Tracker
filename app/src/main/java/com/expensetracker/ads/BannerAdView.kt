@@ -1,17 +1,25 @@
 package com.autoexpensetracker.ads
 
 import android.util.Log
-import android.view.ViewGroup
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
@@ -53,31 +61,57 @@ private const val DEFAULT_BANNER_AD_UNIT_ID = "ca-app-pub-8712457399917631/24811
  */
 @Composable
 fun BannerAdView(adUnitId: String = DEFAULT_BANNER_AD_UNIT_ID, modifier: Modifier = Modifier) {
-    var loadFailed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    var failed by remember { mutableStateOf(false) }
+    var failures by remember { mutableIntStateOf(0) }
 
-    if (loadFailed) return
-
-    AndroidView(
-        modifier = modifier.fillMaxWidth().height(50.dp),
-        factory = { context ->
-            AdView(context).apply {
-                setAdSize(AdSize.BANNER)
-                setAdUnitId(adUnitId)
-                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                adListener = object : AdListener() {
-                    override fun onAdFailedToLoad(error: LoadAdError) {
-                        Log.w(TAG, "Ad failed to load for unit $adUnitId — code=${error.code}, domain=${error.domain}, message=${error.message}")
-                        // No network, no fill, whatever the reason — just
-                        // collapse the slot rather than showing anything broken.
-                        loadFailed = true
-                    }
-
-                    override fun onAdLoaded() {
-                        Log.d(TAG, "Ad loaded successfully for unit $adUnitId")
-                    }
+    // One AdView for as long as this composable stays in the tree. Adaptive
+    // (anchored) size: fills the screen width and usually earns more than the
+    // fixed 320x50 banner.
+    val adView = remember(adUnitId, widthDp) {
+        AdView(context).apply {
+            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, widthDp))
+            setAdUnitId(adUnitId)
+            adListener = object : AdListener() {
+                override fun onAdFailedToLoad(error: LoadAdError) {
+                    Log.w(TAG, "Ad failed to load for unit $adUnitId — code=${error.code}, domain=${error.domain}, message=${error.message}")
+                    // Collapse the slot instead of showing anything broken;
+                    // the effect below retries after a pause.
+                    failures += 1
+                    failed = true
                 }
-                loadAd(AdRequest.Builder().build())
+
+                override fun onAdLoaded() {
+                    Log.d(TAG, "Ad loaded successfully for unit $adUnitId")
+                    failed = false
+                }
             }
         }
-    )
+    }
+
+    DisposableEffect(adView) { onDispose { adView.destroy() } }
+    LaunchedEffect(adView) { adView.loadAd(AdRequest.Builder().build()) }
+
+    // A failed load (no network, no fill, a new unit still propagating) used
+    // to leave the slot empty until the user left the screen. Retry a few
+    // times, a minute apart, then give up for this session.
+    LaunchedEffect(failures) {
+        if (failures in 1..5) {
+            delay(60_000L)
+            adView.loadAd(AdRequest.Builder().build())
+        }
+    }
+
+    // Zero height (not removed) while failed, so the AdView stays alive for
+    // the retry and nothing visible is left behind.
+    val slot = if (failed) {
+        modifier.fillMaxWidth().height(0.dp)
+    } else {
+        modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(vertical = 4.dp)
+    }
+    AndroidView(modifier = slot, factory = { adView })
 }

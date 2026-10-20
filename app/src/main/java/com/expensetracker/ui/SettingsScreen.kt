@@ -81,6 +81,7 @@ import com.autoexpensetracker.review.ReviewHelper
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
 import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.ui.theme.SemanticOrange
 import com.autoexpensetracker.ui.theme.SemanticGray
@@ -133,7 +134,7 @@ internal fun BackupRestoreDialog(onDismiss: () -> Unit, onExport: () -> Unit, on
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFFF3E0)) {
+                Surface(shape = RoundedCornerShape(8.dp), color = SemanticOrange.copy(alpha = 0.12f)) {
                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
                         Icon(Icons.Filled.Warning, contentDescription = null, tint = SemanticOrange, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
@@ -204,7 +205,7 @@ internal fun ImportStatementDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "Transactions that look like ones already captured from a notification (same date, amount, and direction) are skipped automatically.",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                    style = MaterialTheme.typography.bodySmall, color = MutedText
                 )
             }
         },
@@ -263,7 +264,7 @@ internal fun SettingsScreen(
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
         item {
-            Text("Membership", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Membership", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(8.dp))
         }
         item {
@@ -278,7 +279,7 @@ internal fun SettingsScreen(
         }
 
         item {
-            Text("Appearance", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Appearance", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(8.dp))
         }
         item {
@@ -308,7 +309,7 @@ internal fun SettingsScreen(
         }
 
         item {
-            Text("Security", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Security", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(8.dp))
         }
         item {
@@ -326,7 +327,7 @@ internal fun SettingsScreen(
         }
 
         item {
-            Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Data & Privacy", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(8.dp))
         }
         // Backup & Restore and CSV Export are Pro-only (REQUIREMENTS.md
@@ -399,7 +400,7 @@ internal fun SettingsScreen(
 
         item {
             val context = LocalContext.current
-            Text("Support", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("Support", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(8.dp))
             SettingsRow(
                 icon = Icons.Filled.Star,
@@ -433,13 +434,13 @@ internal fun SettingsScreen(
         }
 
         item {
-            Text("About", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+            Text("About", style = MaterialTheme.typography.labelLarge, color = MutedText)
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Expense Tracker v$versionName", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("Expense Tracker v$versionName", style = MaterialTheme.typography.bodySmall, color = MutedText)
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 "Your transactions, budgets, and reminders stay on this device and are never transmitted anywhere. Subscriptions, ads, and app updates use Google's own services.",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                style = MaterialTheme.typography.bodySmall, color = MutedText
             )
             if (!isPro && canRequestAds) {
                 Spacer(modifier = Modifier.height(20.dp))
@@ -479,13 +480,13 @@ private fun SettingsRow(
     onClick: () -> Unit,
     tint: Color = SemanticIndigo
 ) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, onClick = onClick) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.Medium)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MutedText)
             }
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = SemanticGray)
         }
@@ -501,13 +502,13 @@ private fun SettingsToggleRow(
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = if (enabled) SemanticIndigo else SemanticGray, modifier = Modifier.size(22.dp))
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.Medium, color = if (enabled) Color.Unspecified else SemanticGray)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MutedText)
             }
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         }
@@ -555,7 +556,7 @@ internal fun LockScreen(onUnlockClick: () -> Unit) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 "Verify it's you to view your transactions",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                style = MaterialTheme.typography.bodySmall, color = MutedText
             )
             Spacer(modifier = Modifier.height(24.dp))
             Button(onClick = onUnlockClick) {
@@ -584,7 +585,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
                 if (products.isEmpty()) {
                     Text(
                         "Subscription options aren't available right now. This may mean the app hasn't been published with Pro products configured yet.",
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                        style = MaterialTheme.typography.bodySmall, color = MutedText
                     )
                 } else {
                     // Yearly first, and visually distinguished with a "Best
@@ -604,7 +605,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
                         Surface(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             shape = RoundedCornerShape(12.dp),
-                            color = if (isYearly) Color(0xFFEDF7ED) else Color(0xFFF7F7F9),
+                            color = if (isYearly) BrandGreen.copy(alpha = 0.12f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
                             border = if (isYearly) BorderStroke(1.dp, BrandGreen) else null,
                             onClick = { onSelectProduct(product) }
                         ) {
@@ -623,7 +624,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
                                     Text(if (isYearly) "Yearly" else "Monthly", fontWeight = FontWeight.Medium)
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(price, fontWeight = FontWeight.SemiBold)
-                                        Text(period, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                        Text(period, style = MaterialTheme.typography.labelSmall, color = MutedText)
                                     }
                                 }
                             }
@@ -683,7 +684,7 @@ internal fun ManageSubscriptionDialog(
                     }
                     Text(
                         "Takes effect immediately; any remaining time on your current plan is credited toward the new one.",
-                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                        style = MaterialTheme.typography.labelSmall, color = MutedText,
                         modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
                     )
                 }
@@ -693,7 +694,7 @@ internal fun ManageSubscriptionDialog(
                 }
                 Text(
                     "Opens Google Play's own subscription screen — the only place cancellation happens, so it's always fully in your control.",
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = MutedText,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
@@ -797,7 +798,7 @@ private fun CaptureStatusLine(label: String, value: String) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MutedText, modifier = Modifier.weight(1f))
         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
     }
 }

@@ -101,7 +101,7 @@ private enum class Screen(val label: String, val icon: androidx.compose.ui.graph
     HOME("Home", Icons.Filled.Home),
     TRANSACTIONS("Transactions", Icons.Filled.List),
     CHARTS("Charts", Icons.Filled.BarChart),
-    BUDGETS("Budgets", Icons.Filled.PieChart),
+    BUDGETS("Budgets", Icons.Filled.AccountBalanceWallet),
     REMINDERS("Reminders", Icons.Filled.NotificationsActive)
 }
 
@@ -478,6 +478,15 @@ class MainActivity : FragmentActivity() {
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
                         if (!showSettings && !showMonthlyHistory && !showSearch && !isLocked) {
+                          Column {
+                            // One banner for all five tabs, above the nav bar.
+                            // Free users only, and only once UMP consent is
+                            // resolved (canRequestAds). Lives here, not inside
+                            // each screen, so the ad is loaded once and keeps
+                            // showing while the user switches tabs.
+                            if (!isPro && canRequestAds) {
+                                BannerAdView()
+                            }
                             NavigationBar {
                                 Screen.entries.forEach { s ->
                                     NavigationBarItem(
@@ -489,10 +498,11 @@ class MainActivity : FragmentActivity() {
                                             }
                                         },
                                         icon = { Icon(s.icon, contentDescription = s.label) },
-                                        label = { Text(s.label, fontSize = 10.sp) }
+                                        label = { Text(s.label, fontSize = 11.sp, maxLines = 1) }
                                     )
                                 }
                             }
+                          }
                         }
                     },
                     floatingActionButton = {
@@ -664,8 +674,6 @@ class MainActivity : FragmentActivity() {
                                     allTransactions = allTransactions,
                                     notificationAccessGranted = notificationAccessGranted,
                                     onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
-                                    isPro = isPro,
-                                    canRequestAds = canRequestAds,
                                     onSeeAllMonths = { showMonthlyHistory = true }
                                 )
                                 Screen.CHARTS -> ChartsScreen(allTransactions)

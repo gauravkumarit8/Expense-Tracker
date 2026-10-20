@@ -65,7 +65,6 @@ import com.autoexpensetracker.util.RecurringSuggestion
 import com.autoexpensetracker.util.MonthRange
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
-import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
@@ -73,6 +72,7 @@ import com.autoexpensetracker.review.ReviewHelper
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
 import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.ui.theme.SemanticOrange
 import com.autoexpensetracker.ui.theme.SemanticGray
@@ -114,7 +114,7 @@ internal fun BudgetsScreen(budgetDao: BudgetDao, allTransactions: List<Transacti
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
         item {
-            Text("Set a monthly limit per category. Tap any category to edit.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("Set a monthly limit per category. Tap any category to edit.", style = MaterialTheme.typography.bodySmall, color = MutedText)
             Spacer(modifier = Modifier.height(12.dp))
         }
         items(Category.entries) { cat ->
@@ -138,13 +138,13 @@ internal fun BudgetsScreen(budgetDao: BudgetDao, allTransactions: List<Transacti
 
 @Composable
 private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, onClick = onClick) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, onClick = onClick) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("${category.emoji} ${category.label}", fontWeight = FontWeight.Medium)
                 Text(
                     if (limit != null) "${formatInrWhole(spent)} / ${formatInrWhole(limit)}" else "No limit set",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                    style = MaterialTheme.typography.bodySmall, color = MutedText
                 )
             }
             if (limit != null && limit > 0) {
@@ -155,8 +155,9 @@ private fun BudgetRow(category: Category, limit: Double?, spent: Double, onClick
                     spent / limit > 0.7 -> Color(0xFFF57C00)
                     else -> BrandGreen
                 }
+                val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
                 Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
-                    drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
+                    drawRoundRect(color = trackColor, cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
                     drawRoundRect(color = barColor, size = size.copy(width = size.width * fraction), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f))
                 }
                 if (spent > limit) {

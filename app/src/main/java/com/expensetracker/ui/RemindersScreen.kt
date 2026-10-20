@@ -68,7 +68,6 @@ import com.autoexpensetracker.util.PriceChangeStore
 import com.autoexpensetracker.util.MonthRange
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
-import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
@@ -76,6 +75,7 @@ import com.autoexpensetracker.review.ReviewHelper
 import com.autoexpensetracker.review.ReviewPromptStore
 import com.autoexpensetracker.ui.theme.ExpenseTrackerTheme
 import com.autoexpensetracker.ui.theme.BrandGreen
+import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticRed
 import com.autoexpensetracker.ui.theme.SemanticOrange
 import com.autoexpensetracker.ui.theme.SemanticGray
@@ -123,7 +123,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("No reminders yet", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("Tap + to add a bill or subscription reminder.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("Tap + to add a bill or subscription reminder.", style = MaterialTheme.typography.bodySmall, color = MutedText)
             }
         }
     } else {
@@ -139,7 +139,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
             }
             if (priceChangeAlerts.isNotEmpty()) {
                 item {
-                    Text("Price changes detected", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                    Text("Price changes detected", style = MaterialTheme.typography.titleSmall, color = MutedText)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 items(priceChangeAlerts, key = { it.merchant + it.newAmount }) { alert ->
@@ -156,7 +156,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
             }
             if (suggestions.isNotEmpty()) {
                 item {
-                    Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                    Text("Suggested (recurring spending detected)", style = MaterialTheme.typography.titleSmall, color = MutedText)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 items(suggestions) { suggestion ->
@@ -183,7 +183,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
                 if (reminders.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("Your reminders", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                        Text("Your reminders", style = MaterialTheme.typography.titleSmall, color = MutedText)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
@@ -240,7 +240,7 @@ private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = if (up) Color(0xFFFFF3E0) else Color(0xFFE8F5E9)
+        color = if (up) SemanticOrange.copy(alpha = 0.12f) else BrandGreen.copy(alpha = 0.12f)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
@@ -253,7 +253,7 @@ private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
             }
             Text(
                 "${formatInr(alert.previousAmount)} → ${formatInr(alert.newAmount)} (${if (up) "+" else "-"}$pct%)",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                style = MaterialTheme.typography.bodySmall, color = MutedText
             )
             Spacer(modifier = Modifier.height(8.dp))
             TextButton(onClick = onDismiss) { Text("Got it") }
@@ -263,12 +263,12 @@ private fun PriceChangeRow(alert: PriceChangeAlert, onDismiss: () -> Unit) {
 
 @Composable
 private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit, onDismiss: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color(0xFFEDE7F6)) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = SemanticIndigo.copy(alpha = 0.12f)) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(suggestion.merchant, fontWeight = FontWeight.Medium)
             Text(
                 "~${formatInr(suggestion.averageAmount)} around day ${suggestion.suggestedDueDay} • seen ${suggestion.occurrenceCount} times",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                style = MaterialTheme.typography.bodySmall, color = MutedText
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -281,19 +281,19 @@ private fun SuggestionRow(suggestion: RecurringSuggestion, onAccept: () -> Unit,
 
 @Composable
 private fun ReminderRow(reminder: Reminder, onDelete: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFE3F2FD)), contentAlignment = Alignment.Center) {
-                Text("${reminder.dueDayOfMonth}", fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
+            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(SemanticIndigo.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                Text("${reminder.dueDayOfMonth}", fontWeight = FontWeight.SemiBold, color = SemanticIndigo)
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(reminder.title, fontWeight = FontWeight.Medium)
                 Text(
                     "Due day ${reminder.dueDayOfMonth} of month" + (reminder.amount?.let { " • ${formatInr(it)}" } ?: ""),
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray
+                    style = MaterialTheme.typography.bodySmall, color = MutedText
                 )
-                if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                if (!reminder.notes.isNullOrBlank()) Text(reminder.notes, style = MaterialTheme.typography.bodySmall, color = MutedText)
             }
             IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "Delete reminder", tint = SemanticGray) }
         }

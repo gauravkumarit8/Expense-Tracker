@@ -65,10 +65,11 @@ import com.autoexpensetracker.util.BiometricAuthHelper
 import com.autoexpensetracker.util.DismissedSuggestionsStore
 import com.autoexpensetracker.util.RecurringDetector
 import com.autoexpensetracker.util.RecurringSuggestion
+import com.autoexpensetracker.ui.theme.MutedText
+import com.autoexpensetracker.util.ChartMath
 import com.autoexpensetracker.util.MonthRange
 import com.autoexpensetracker.util.SummaryPeriod
 import com.autoexpensetracker.util.SummaryPeriodStore
-import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.update.AppUpdateHelper
@@ -233,8 +234,85 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
     }
 
     val total = byCategory.sumOf { it.second }
+    val monthReceived = remember(allTransactions, startOfMonth, endOfMonth) {
+        allTransactions
+            .filter { it.direction == Direction.RECEIVED && it.timestampMillis in startOfMonth..endOfMonth }
+            .sumOf { it.amount }
+    }
+    val dailySpend = remember(thisMonthSpend, selectedMonth) {
+        ChartMath.dailyTotals(
+            thisMonthSpend.map { it.timestampMillis to it.amount },
+            selectedMonth.year,
+            selectedMonth.month
+        )
+    }
+    val elapsedDays = remember(selectedMonth) {
+        ChartMath.elapsedDays(selectedMonth.year, selectedMonth.month, System.currentTimeMillis())
+    }
+    // Theme colours are read here, in composable scope, and handed down —
+    // they cannot be read inside a Canvas draw lambda.
+    val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        item {
+            MonthSwitcher(
+                label = selectedMonth.label(),
+                canGoNext = !selectedMonth.isCurrentOrFuture(),
+                onPrevious = { selectedMonth = selectedMonth.previous() },
+                onNext = { selectedMonth = selectedMonth.next() }
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            MonthSummaryCard(spent = total, received = monthReceived)
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        item {
+            Text("Spending by category", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(12.dp))
+            if (byCategory.isEmpty()) {
+                Text("No spending in ${selectedMonth.label()}", style = MaterialTheme.typography.bodySmall, color = MutedText)
+            } else {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    SpendDonut(slices = byCategory, total = total, trackColor = trackColor)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+        if (byCategory.isNotEmpty()) {
+            items(byCategory) { (category, amount) ->
+                CategoryBarRow(category, amount, total, trackColor)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+        }
+
+        if (total > 0.0) {
+            item {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Daily spending", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(4.dp))
+                DailySpendChart(
+                    daily = dailySpend,
+                    total = total,
+                    elapsedDays = elapsedDays,
+                    monthLabel = selectedMonth.label()
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Spending trend", style = MaterialTheme.typography.titleMedium)
+            Text("Last 6 months, spent vs received. Tap a month to jump to it.", style = MaterialTheme.typography.bodySmall, color = MutedText)
+            Spacer(modifier = Modifier.height(12.dp))
+            SpendTrendChart(
+                allTransactions = allTransactions,
+                selectedMonth = selectedMonth,
+                onSelectMonth = { selectedMonth = it }
+            )
+            Spacer(modifier = Modifier.height(28.dp))
+        }
+
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -243,7 +321,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
             ) {
                 Column {
                     Text("Account balances", style = MaterialTheme.typography.titleMedium)
-                    Text("Latest known balance per account", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text("Latest known balance per account", style = MaterialTheme.typography.bodySmall, color = MutedText)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { showAddBalanceDialog = true }) {
@@ -256,7 +334,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
                         Icon(
                             if (balancesVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                             contentDescription = if (balancesVisible) "Hide balances" else "Show balances",
-                            tint = Color.Gray
+                            tint = MutedText
                         )
                     }
                 }
@@ -268,7 +346,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
                 Text(
                     "No account balances yet — captured messages with a balance will show up here, or add one manually.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MutedText
                 )
                 Spacer(modifier = Modifier.height(20.dp))
             }
@@ -313,74 +391,6 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        if (byCategory.isNotEmpty()) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Spending by category", style = MaterialTheme.typography.titleMedium)
-                        Text("Total: ${formatInr(total)}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
-                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
-                        }
-                        Text(selectedMonth.label(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        IconButton(
-                            onClick = { selectedMonth = selectedMonth.next() },
-                            enabled = !selectedMonth.isCurrentOrFuture()
-                        ) {
-                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-            items(byCategory) { (category, amount) ->
-                CategoryBarRow(category, amount, total)
-                Spacer(modifier = Modifier.height(10.dp))
-            }
-        } else {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Spending by category", style = MaterialTheme.typography.titleMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { selectedMonth = selectedMonth.previous() }) {
-                            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
-                        }
-                        Text(selectedMonth.label(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        IconButton(
-                            onClick = { selectedMonth = selectedMonth.next() },
-                            enabled = !selectedMonth.isCurrentOrFuture()
-                        ) {
-                            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
-                        }
-                    }
-                }
-                Text("No spending in ${selectedMonth.label()}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                Spacer(modifier = Modifier.height(20.dp))
-            }
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("Spending trend", style = MaterialTheme.typography.titleMedium)
-            Text("Last 6 months — tap a bar to jump to that month", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            Spacer(modifier = Modifier.height(12.dp))
-            SpendTrendChart(
-                allTransactions = allTransactions,
-                selectedMonth = selectedMonth,
-                onSelectMonth = { selectedMonth = it }
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-        }
     }
 }
 
@@ -414,14 +424,14 @@ private fun BalanceRow(
         BalanceHistoryDialog(source = source, history = history, visible = visible, onDismiss = { showHistory = false })
     }
 
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
                     Text(source, fontWeight = FontWeight.Medium)
                     if (isManual) {
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("(manual)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text("(manual)", style = MaterialTheme.typography.labelSmall, color = MutedText)
                     }
                 }
                 Text(
@@ -431,13 +441,13 @@ private fun BalanceRow(
                 )
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = MutedText)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { showHistory = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = MutedText, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = MutedText, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
@@ -475,7 +485,7 @@ private fun BalanceHistoryDialog(
                     Text(
                         pointDateFormat.format(Date(selectedTime)),
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
+                        color = MutedText
                     )
                     Text(
                         if (visible) formatInr(selectedValue) else "₹ • • • • • •",
@@ -534,19 +544,19 @@ private fun BalanceHistoryDialog(
                         }
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(dateFormat.format(Date(history.first().first)), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                        Text(dateFormat.format(Date(history.last().first)), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text(dateFormat.format(Date(history.first().first)), style = MaterialTheme.typography.labelSmall, color = MutedText)
+                        Text(dateFormat.format(Date(history.last().first)), style = MaterialTheme.typography.labelSmall, color = MutedText)
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         if (visible) "Lowest: ${formatInr(minY)}" else "Lowest: ₹ • • • • • •",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
+                        color = MutedText
                     )
                     Text(
                         "${history.size} balance points captured — tap the chart to see any point",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
+                        color = MutedText
                     )
                 }
             }
@@ -605,32 +615,215 @@ private fun AddOrEditBalanceDialog(
     )
 }
 
+/** One colour per category, kept stable so "Food" is the same colour everywhere. */
+private fun categoryColor(category: Category): Color = when (category) {
+    Category.FOOD -> Color(0xFFEF6C00)
+    Category.GROCERIES -> Color(0xFF43A047)
+    Category.SHOPPING -> Color(0xFFAB47BC)
+    Category.BILLS -> Color(0xFF1E88E5)
+    Category.TRANSFER -> Color(0xFF78909C)
+    Category.ENTERTAINMENT -> Color(0xFFEC407A)
+    Category.TRAVEL -> Color(0xFF00ACC1)
+    Category.HEALTH -> Color(0xFFE53935)
+    Category.OTHER -> Color(0xFF8D6E63)
+}
+
 @Composable
-private fun CategoryBarRow(category: Category, amount: Double, total: Double) {
-    val fraction = if (total > 0) (amount / total).toFloat() else 0f
-    Column {
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Text("${category.emoji} ${category.label}", style = MaterialTheme.typography.bodyMedium)
-            Text("${formatInr(amount)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+private fun MonthSwitcher(label: String, canGoNext: Boolean, onPrevious: () -> Unit, onNext: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onPrevious) {
+            Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous month")
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        Canvas(modifier = Modifier.fillMaxWidth().height(14.dp)) {
-            drawRoundRect(color = Color(0xFFE0E0E0), cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f))
-            drawRoundRect(
-                color = SemanticIndigo,
-                size = size.copy(width = size.width * fraction),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f)
+        Text(label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        IconButton(onClick = onNext, enabled = canGoNext) {
+            Icon(Icons.Filled.ChevronRight, contentDescription = "Next month")
+        }
+    }
+}
+
+@Composable
+private fun MonthSummaryCard(spent: Double, received: Double) {
+    val net = received - spent
+    val netColor = if (net >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+    val netText = (if (net >= 0.0) "+" else "-") + formatInrWhole(kotlin.math.abs(net))
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            SummaryStat("Spent", formatInrWhole(spent), MaterialTheme.colorScheme.error)
+            SummaryStat("Received", formatInrWhole(received), MaterialTheme.colorScheme.primary)
+            SummaryStat("Net", netText, netColor)
+        }
+    }
+}
+
+@Composable
+private fun SummaryStat(label: String, value: String, valueColor: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText)
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = valueColor)
+    }
+}
+
+/** Ring split by category, total in the middle. */
+@Composable
+private fun SpendDonut(slices: List<Pair<Category, Double>>, total: Double, trackColor: Color) {
+    Box(modifier = Modifier.size(190.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = 28.dp.toPx()
+            val topLeft = Offset(stroke / 2f, stroke / 2f)
+            val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+            drawArc(
+                color = trackColor,
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = stroke)
+            )
+            val gap = if (slices.size > 1) 2f else 0f
+            var start = -90f
+            slices.forEach { (category, amount) ->
+                val sweep = (amount / total * 360.0).toFloat()
+                drawArc(
+                    color = categoryColor(category),
+                    startAngle = start,
+                    sweepAngle = (sweep - gap).coerceAtLeast(0.5f),
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke)
+                )
+                start += sweep
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Spent", style = MaterialTheme.typography.labelMedium, color = MutedText)
+            Text(formatInrWhole(total), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun CategoryBarRow(category: Category, amount: Double, total: Double, trackColor: Color) {
+    val fraction = if (total > 0) (amount / total).toFloat().coerceIn(0f, 1f) else 0f
+    val color = categoryColor(category)
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(color))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("${category.emoji} ${category.label}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text(ChartMath.percentLabel(amount, total), style = MaterialTheme.typography.bodySmall, color = MutedText)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(formatInr(amount), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(trackColor)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(color)
             )
         }
     }
 }
 
+/** One bar per day of the month, with a dashed daily-average line and the peak day highlighted. */
+@Composable
+private fun DailySpendChart(daily: DoubleArray, total: Double, elapsedDays: Int, monthLabel: String) {
+    val barColor = MaterialTheme.colorScheme.primary
+    val peakColor = MaterialTheme.colorScheme.error
+    val lineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+    val baseColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+    val maxDay = daily.maxOrNull() ?: 0.0
+    val peak = ChartMath.peakIndex(daily)
+    val avg = ChartMath.dailyAverage(total, elapsedDays)
+
+    Text(
+        "Average ${formatInrWhole(avg)} a day in $monthLabel",
+        style = MaterialTheme.typography.bodySmall,
+        color = MutedText
+    )
+    if (peak >= 0) {
+        Text(
+            "Highest: day ${peak + 1}, ${formatInrWhole(daily[peak])}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedText
+        )
+    }
+    Spacer(modifier = Modifier.height(10.dp))
+    Canvas(modifier = Modifier.fillMaxWidth().height(110.dp)) {
+        val n = daily.size
+        val slot = size.width / n
+        val barW = slot * 0.62f
+        val corner = androidx.compose.ui.geometry.CornerRadius(barW / 3f, barW / 3f)
+        daily.forEachIndexed { i, v ->
+            val f = ChartMath.barFraction(v, maxDay)
+            if (f > 0f) {
+                val h = size.height * f
+                drawRoundRect(
+                    color = if (i == peak) peakColor else barColor,
+                    topLeft = Offset(i * slot + (slot - barW) / 2f, size.height - h),
+                    size = androidx.compose.ui.geometry.Size(barW, h),
+                    cornerRadius = corner
+                )
+            }
+        }
+        drawLine(
+            color = baseColor,
+            start = Offset(0f, size.height),
+            end = Offset(size.width, size.height),
+            strokeWidth = 1.dp.toPx()
+        )
+        if (avg > 0.0 && maxDay > 0.0) {
+            val y = size.height - size.height * (avg / maxDay).toFloat().coerceIn(0f, 1f)
+            drawLine(
+                color = lineColor,
+                start = Offset(0f, y),
+                end = Offset(size.width, y),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(14f, 10f))
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("1", style = MaterialTheme.typography.labelSmall, color = MutedText)
+        Text("${daily.size}", style = MaterialTheme.typography.labelSmall, color = MutedText)
+    }
+}
+
+private data class TrendMonth(val month: MonthRange, val spent: Double, val received: Double)
+
 /**
- * Total SENT spend for each of the trailing 6 real-world months (ending at
+ * Spent and received for each of the trailing 6 real-world months (ending at
  * the actual current month, independent of [selectedMonth] navigation, so
- * the window doesn't shift under the user as they browse). Tapping a bar
- * jumps [selectedMonth] to that month — this doubles as a second, more
- * visual month picker alongside the prev/next arrows above.
+ * the window doesn't shift under the user as they browse). Tapping a month
+ * jumps [selectedMonth] to it.
+ *
+ * Bar heights are explicit dp values computed from the data, and the month
+ * labels sit in their own row below the bar area, so a tall bar can never
+ * push its label out of the chart.
  */
 @Composable
 private fun SpendTrendChart(
@@ -648,58 +841,92 @@ private fun SpendTrendChart(
     }
     val totals = remember(allTransactions, months) {
         months.map { m ->
-            m to allTransactions
-                .filter { it.direction == Direction.SENT && m.contains(it.timestampMillis) }
-                .sumOf { it.amount }
+            TrendMonth(
+                month = m,
+                spent = allTransactions
+                    .filter { it.direction == Direction.SENT && m.contains(it.timestampMillis) }
+                    .sumOf { it.amount },
+                received = allTransactions
+                    .filter { it.direction == Direction.RECEIVED && m.contains(it.timestampMillis) }
+                    .sumOf { it.amount }
+            )
         }
     }
-    val maxTotal = totals.maxOfOrNull { it.second } ?: 0.0
+    val maxValue = totals.maxOfOrNull { maxOf(it.spent, it.received) } ?: 0.0
 
-    if (maxTotal <= 0.0) {
-        Text("Not enough history yet to show a trend.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+    if (maxValue <= 0.0) {
+        Text("Not enough history yet to show a trend.", style = MaterialTheme.typography.bodySmall, color = MutedText)
         return
     }
 
+    val spentColor = MaterialTheme.colorScheme.error
+    val receivedColor = MaterialTheme.colorScheme.primary
     val monthShortFormat = remember { SimpleDateFormat("MMM", Locale.getDefault()) }
+    val chartHeight = 130.dp
+    val barShape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(140.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.Bottom
-    ) {
-        totals.forEach { (month, amount) ->
-            val isSelected = month == selectedMonth
-            val fraction = (amount / maxTotal).toFloat().coerceIn(0f, 1f)
+    val selected = totals.firstOrNull { it.month == selectedMonth }
+    if (selected != null) {
+        Text(
+            "${selected.month.label()}: spent ${formatInrWhole(selected.spent)}, received ${formatInrWhole(selected.received)}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+    }
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        totals.forEach { t ->
+            val isSelected = t.month == selectedMonth
+            val alpha = if (isSelected) 1f else 0.45f
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = { onSelectMonth(t.month) })
             ) {
-                Spacer(modifier = Modifier.weight(1f))
-                if (isSelected && amount > 0) {
-                    Text(formatInrWhole(amount), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(2.dp))
-                }
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.55f)
-                        .fillMaxHeight(fraction.coerceAtLeast(0.02f))
-                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                        .background(if (isSelected) SemanticIndigo else SemanticIndigo.copy(alpha = 0.35f))
-                        .clickable(onClick = { onSelectMonth(month) })
-                )
+                    modifier = Modifier.fillMaxWidth().height(chartHeight),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
+                        Box(
+                            modifier = Modifier
+                                .width(12.dp)
+                                .height(chartHeight * ChartMath.barFraction(t.spent, maxValue))
+                                .clip(barShape)
+                                .background(spentColor.copy(alpha = alpha))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(12.dp)
+                                .height(chartHeight * ChartMath.barFraction(t.received, maxValue))
+                                .clip(barShape)
+                                .background(receivedColor.copy(alpha = alpha))
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    monthShortFormat.format(Date(month.startOfMonthMillis())),
+                    monthShortFormat.format(Date(t.month.startOfMonthMillis())),
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isSelected) SemanticIndigo else Color.Gray,
+                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MutedText,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                 )
+                Spacer(modifier = Modifier.height(4.dp))
             }
         }
     }
-}
 
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(spentColor))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Spent", style = MaterialTheme.typography.labelSmall, color = MutedText)
+        Spacer(modifier = Modifier.width(12.dp))
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(receivedColor))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Received", style = MaterialTheme.typography.labelSmall, color = MutedText)
+    }
+}
