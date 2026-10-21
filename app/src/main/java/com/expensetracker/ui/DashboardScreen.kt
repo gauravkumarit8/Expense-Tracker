@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.autoexpensetracker.data.BudgetDao
 import com.autoexpensetracker.data.Category
+import com.autoexpensetracker.util.BudgetPolicy
 import com.autoexpensetracker.data.Direction
 import com.autoexpensetracker.data.Reminder
 import com.autoexpensetracker.data.ReminderDao
@@ -158,6 +159,7 @@ internal fun DashboardScreen(
     val topBudgets = remember(budgets, spendByCategory) {
         budgets.mapNotNull { b ->
             val cat = Category.fromNameOrNull(b.category) ?: return@mapNotNull null
+            if (!BudgetPolicy.isBudgetable(cat)) return@mapNotNull null
             Triple(cat, spendByCategory[cat] ?: 0.0, b.monthlyLimit)
         }.sortedByDescending { (_, spentAmt, limit) -> if (limit > 0) spentAmt / limit else 0.0 }
             .take(3)

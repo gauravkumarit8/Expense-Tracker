@@ -53,7 +53,8 @@ internal fun SearchIdleState(
     onQuickWeek: () -> Unit,
     onQuickMonth: () -> Unit,
     onQuickCategory: (Category) -> Unit,
-    onBrowseAll: () -> Unit
+    onBrowseAll: () -> Unit,
+    adSlot: (@Composable () -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
@@ -124,6 +125,14 @@ internal fun SearchIdleState(
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedButton(onClick = onBrowseAll, modifier = Modifier.fillMaxWidth()) {
             Text("Browse all transactions ($totalCount)")
+        }
+        // An ad, when the caller allows one, sits last: well clear of the
+        // buttons and chips above (AdMob penalises ads that invite accidental
+        // taps) and in its own labelled card.
+        if (adSlot != null) {
+            Spacer(modifier = Modifier.height(28.dp))
+            adSlot()
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }

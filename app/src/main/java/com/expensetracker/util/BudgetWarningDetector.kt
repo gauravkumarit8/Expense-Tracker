@@ -42,6 +42,7 @@ object BudgetWarningDetector {
     ) {
         if (newTransaction.direction != Direction.SENT || newTransaction.needsReview) return
         val category = Category.fromNameOrNull(newTransaction.category) ?: return
+        if (!BudgetPolicy.isBudgetable(category)) return
 
         val budget = budgetDao.getAllOnce().firstOrNull { it.category == category.name } ?: return
         if (budget.monthlyLimit <= 0) return

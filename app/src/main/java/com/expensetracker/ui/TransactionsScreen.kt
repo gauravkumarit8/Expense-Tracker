@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.autoexpensetracker.ads.SearchNativeAd
 import com.autoexpensetracker.pdf.PdfAccessPolicy
 import com.autoexpensetracker.pdf.PdfPeriod
 import com.autoexpensetracker.util.RecentSearchStore
@@ -259,7 +260,8 @@ private fun shortDate(millis: Long): String = SimpleDateFormat("d MMM", Locale.g
 @Composable
 internal fun SearchReviewScreen(
     transactionDao: TransactionDao,
-    allTransactions: List<Transaction>
+    allTransactions: List<Transaction>,
+    showAds: Boolean = false
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -359,7 +361,8 @@ internal fun SearchReviewScreen(
                     onQuickWeek = { dateFilter = DateFilter.THIS_WEEK },
                     onQuickMonth = { dateFilter = DateFilter.THIS_MONTH },
                     onQuickCategory = { categoryFilter = it },
-                    onBrowseAll = { browseAll = true }
+                    onBrowseAll = { browseAll = true },
+                    adSlot = if (showAds) ({ SearchNativeAd() }) else null
                 )
             } else {
             Row(

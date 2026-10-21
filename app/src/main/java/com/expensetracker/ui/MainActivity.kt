@@ -318,7 +318,7 @@ class MainActivity : FragmentActivity() {
                         onReward = {
                             dayState = RewardStore.grantAdFreeDay(context)
                             showSearchAdPrompt = false
-                            scope.launch { snackbarHostState.showSnackbar("Banner ads are hidden for the rest of today") }
+                            scope.launch { snackbarHostState.showSnackbar("Ads in the app are hidden for the rest of today") }
                         },
                         onNoReward = { },
                         onFailed = { scope.launch { snackbarHostState.showSnackbar("Couldn't show the ad. Please try again.") } }
@@ -816,7 +816,9 @@ class MainActivity : FragmentActivity() {
                             // selected underneath (see the Back handling above).
                             SearchReviewScreen(
                                 transactionDao = transactionDao,
-                                allTransactions = allTransactions
+                                allTransactions = allTransactions,
+                                // Same rule as the banner: free users, consent resolved, not in an ad-free day.
+                                showAds = !isPro && canRequestAds && !adFreeToday
                             )
                         } else {
                             when (screen) {

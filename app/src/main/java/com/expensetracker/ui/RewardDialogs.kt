@@ -61,10 +61,10 @@ internal fun RewardedUnlockDialog(
 internal fun SearchAdPromptDialog(adReady: Boolean, onWatchAd: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("No banner ads for today?") },
+        title = { Text("No ads for today?") },
         text = {
             Text(
-                "You've used Search a lot today. Watch one short ad and the banner ads are hidden until tomorrow. " +
+                "You've used Search a lot today. Watch one short ad and the banner and sponsored cards are hidden until tomorrow. " +
                     "It's optional, and you'll only be asked once a day. How long the ad runs is up to the advertiser."
             )
         },
