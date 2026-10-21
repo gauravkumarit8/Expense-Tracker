@@ -238,6 +238,8 @@ internal fun SettingsScreen(
     onCsvExportClick: () -> Unit,
     onImportStatementClick: () -> Unit,
     isPro: Boolean,
+    rewardsEnabled: Boolean,
+    rewardHint: String,
     onUpgradeClick: () -> Unit,
     appLockEnabled: Boolean,
     canUseAppLock: Boolean,
@@ -354,11 +356,18 @@ internal fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
+        }
+        // 2026-10-20: CSV export and import are also shown to free users when
+        // rewarded ads are available, because those two can be used once a
+        // month after watching an ad (see RewardLogic). Backup & Restore stays
+        // Pro-only and hidden. When rewarded ads are not configured the rows
+        // stay hidden for free users exactly as before.
+        if (isPro || rewardsEnabled) {
             item {
                 SettingsRow(
                     icon = Icons.Filled.TableChart,
                     title = "Export to CSV",
-                    subtitle = "For opening in Excel, Sheets, etc. — not for restoring",
+                    subtitle = if (isPro) "For opening in Excel, Sheets, etc. — and for moving to a new phone" else rewardHint,
                     onClick = onCsvExportClick
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -367,7 +376,7 @@ internal fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Filled.UploadFile,
                     title = "Import transactions (CSV)",
-                    subtitle = "Moving phones? Import a CSV exported from this app, or a bank statement",
+                    subtitle = if (isPro) "Moving phones? Import a CSV exported from this app, or a bank statement" else rewardHint,
                     onClick = onImportStatementClick
                 )
                 Spacer(modifier = Modifier.height(8.dp))

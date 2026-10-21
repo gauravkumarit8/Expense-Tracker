@@ -49,6 +49,7 @@ import com.autoexpensetracker.data.AppDatabase
 import com.autoexpensetracker.data.Budget
 import com.autoexpensetracker.data.BudgetDao
 import com.autoexpensetracker.data.Category
+import com.autoexpensetracker.util.BudgetPolicy
 import com.autoexpensetracker.data.Direction
 import com.autoexpensetracker.data.Reminder
 import com.autoexpensetracker.data.ReminderDao
@@ -115,9 +116,10 @@ internal fun BudgetsScreen(budgetDao: BudgetDao, allTransactions: List<Transacti
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
         item {
             Text("Set a monthly limit per category. Tap any category to edit.", style = MaterialTheme.typography.bodySmall, color = MutedText)
+            Text("Transfers aren't budgeted: they move money rather than spend it.", style = MaterialTheme.typography.bodySmall, color = MutedText)
             Spacer(modifier = Modifier.height(12.dp))
         }
-        items(Category.entries) { cat ->
+        items(Category.entries.filter { BudgetPolicy.isBudgetable(it) }) { cat ->
             val limit = budgets.firstOrNull { it.category == cat.name }?.monthlyLimit
             val spent = spendByCategory[cat] ?: 0.0
             BudgetRow(cat, limit, spent, onClick = { editingCategory = cat })

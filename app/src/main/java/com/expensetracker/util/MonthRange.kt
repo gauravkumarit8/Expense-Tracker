@@ -56,7 +56,12 @@ data class MonthRange(val year: Int, val month: Int) : Serializable { // month: 
     fun isInSameYear(timestampMillis: Long): Boolean =
         timestampMillis in startOfYearMillis()..endOfYearMillis()
 
-    fun label(): String = MONTH_LABEL_FORMAT.format(Date(startOfMonthMillis()))
+    // Built per call, not cached (same reasoning as DayRange.label): a
+    // SimpleDateFormat captures the default time zone and locale when it is
+    // created and is not thread-safe, so a long-lived shared one showed the
+    // wrong month after a time-zone or language change while the process
+    // stayed alive. A label is formatted rarely enough that this is free.
+    fun label(): String = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(startOfMonthMillis()))
 
     fun yearLabel(): String = year.toString()
 
@@ -90,8 +95,6 @@ data class MonthRange(val year: Int, val month: Int) : Serializable { // month: 
     }
 
     companion object {
-        private val MONTH_LABEL_FORMAT = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
-
         fun current(): MonthRange {
             val c = Calendar.getInstance()
             return MonthRange(c.get(Calendar.YEAR), c.get(Calendar.MONTH))
