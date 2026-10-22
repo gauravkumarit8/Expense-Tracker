@@ -33,6 +33,17 @@ internal object AppLinks {
         }
     }
 
+    /** The public privacy policy page (same one linked from the Play listing). */
+    const val PRIVACY_POLICY_URL = "https://gauravkumarit8.github.io/privacy-policy.html"
+
+    fun privacyPolicy(context: Context) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_POLICY_URL)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (ignored: ActivityNotFoundException) {
+            // No browser on the phone; nothing sensible left to do.
+        }
+    }
+
     fun share(context: Context) {
         val link = "https://play.google.com/store/apps/details?id=${context.packageName}"
         val send = Intent(Intent.ACTION_SEND).apply {

@@ -27,3 +27,8 @@ Thumbs.db
 *.log
 
 keystore.properties
+# Build artifacts and delivery files that do not belong in git
+*.apk
+*.aab
+*.ap_
+*.patch

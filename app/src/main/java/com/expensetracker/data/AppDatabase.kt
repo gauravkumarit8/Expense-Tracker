@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import com.autoexpensetracker.util.KeystoreHelper
 
-@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 5, exportSchema = false)
+@Database(entities = [Transaction::class, Reminder::class, Budget::class], version = 5, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao

@@ -38,7 +38,7 @@ class OwnCsvTest {
     check("4 rows", res.rows.size == 4)
     val byAmt = res.rows.associateBy { Math.round(it.amount * 100) }
     val a = byAmt[34000L]!!
-    check("rt ts exact ms", a.timestampMillis == t1)
+    check("rt ts to the second", a.timestampMillis == (t1 / 1000L) * 1000L)
     check("rt dir", a.direction == Direction.SENT)
     check("rt merchant", a.merchant == "Swiggy")
     check("rt bank", a.bankOrSource == "HDFCBK")
@@ -80,6 +80,20 @@ class OwnCsvTest {
     TimeZone.setDefault(saved)
     check("tz exact with ts column", withTs == t1 / 1000 * 1000)
     check("tz fallback differs (documented)", withoutTs != t1 / 1000 * 1000 || saved.id == "America/New_York")
+
+    // --- the current seconds column (10 digits) behaves like the legacy ms column
+    val secCsv = "Date,Time,Direction,Amount,Bank/Source,Timestamp (s)\n2026-10-12,14:05:09,SENT,100.00,HDFCBK,${t1 / 1000}\n"
+    TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+    val withSec = OwnCsv.parse(secCsv).rows[0].timestampMillis
+    TimeZone.setDefault(saved)
+    check("seconds column exact across time zones", withSec == (t1 / 1000L) * 1000L)
+    val secOnly = "Direction,Amount,Bank/Source,Timestamp (s)\nSENT,100.00,HDFCBK,${t1 / 1000}\n"
+    check("seconds column alone is enough", OwnCsv.parse(secOnly).rows.size == 1)
+    val badSec = "Date,Time,Direction,Amount,Bank/Source,Timestamp (s)\n2026-10-12,14:05:09,SENT,100.00,HDFCBK,1.76E+09\n"
+    check("mangled seconds fall back to date+time", OwnCsv.parse(badSec).rows[0].timestampMillis == ms(2026, Calendar.OCTOBER, 12, 14, 5, 9))
+    val outOfRange = "Date,Time,Direction,Amount,Bank/Source,Timestamp (s)\n2026-10-12,14:05:09,SENT,100.00,HDFCBK,0000000001\n"
+    check("implausible seconds fall back", OwnCsv.parse(outOfRange).rows[0].timestampMillis == ms(2026, Calendar.OCTOBER, 12, 14, 5, 9))
+    check("signed amount column ignored", OwnCsv.parse("Date,Direction,Amount,Signed Amount,Bank/Source\n2026-10-12,SENT,5,-5,X\n").rows[0].amount == 5.0)
 
     // --- spreadsheet-mangled timestamp falls back to date+time
     val mangled = "Date,Time,Direction,Amount,Bank/Source,Timestamp (ms)\n2026-10-12,14:05:09,SENT,100.00,HDFCBK,1.76044E+12\n"

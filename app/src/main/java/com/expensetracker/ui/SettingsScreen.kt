@@ -432,6 +432,13 @@ internal fun SettingsScreen(
                 subtitle = "Send a link to the Play Store listing",
                 onClick = { AppLinks.share(context) }
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.PrivacyTip,
+                title = "Privacy policy",
+                subtitle = "What the app reads, what it stores, and what it never sends",
+                onClick = { AppLinks.privacyPolicy(context) }
+            )
             Spacer(modifier = Modifier.height(20.dp))
         }
 

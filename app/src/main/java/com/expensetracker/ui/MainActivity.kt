@@ -385,7 +385,7 @@ class MainActivity : FragmentActivity() {
                             // A null stream used to fall through silently and
                             // still report "Backup saved" — now it's an error.
                             withContext(Dispatchers.IO) {
-                                val out = context.contentResolver.openOutputStream(uri)
+                                val out = com.autoexpensetracker.util.FileWrite.openForRewrite(context.contentResolver, uri)
                                     ?: throw IllegalStateException("Could not open the destination file")
                                 out.use { it.write(BackupSerializer.toJson(payload).toByteArray()) }
                             }
@@ -396,23 +396,60 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
+                // "ALL" for the whole history, or an encoded PdfPeriod for one day /
+                // month / year; kept as a string in rememberSaveable so the export
+                // survives the Activity being recreated while the file picker is open.
+                var pendingCsv by rememberSaveable { mutableStateOf<String?>(null) }
                 val csvExportLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument("text/csv")
                 ) { uri ->
+                    val scopeText = pendingCsv
+                    pendingCsv = null
                     if (uri == null) return@rememberLauncherForActivityResult
+                    val period = com.autoexpensetracker.pdf.PdfPeriods.decode(scopeText) // null = everything
                     scope.launch {
                         try {
-                            val transactions = transactionDao.getAllOnce()
+                            val all = transactionDao.getAllOnce()
+                            val chosen = if (period == null) all else com.autoexpensetracker.pdf.PdfReportBuilder.inPeriod(all, period)
                             withContext(Dispatchers.IO) {
-                                val out = context.contentResolver.openOutputStream(uri)
+                                val out = com.autoexpensetracker.util.FileWrite.openForRewrite(context.contentResolver, uri)
                                     ?: throw IllegalStateException("Could not open the destination file")
-                                out.use { it.write(com.autoexpensetracker.backup.CsvExporter.toCsv(transactions).toByteArray()) }
+                                out.use { it.write(com.autoexpensetracker.backup.CsvExporter.toBytes(chosen)) }
                             }
                             spendUnlockIfFree()
-                            snackbarHostState.showSnackbar("CSV saved (${transactions.size} transactions)")
+                            val result = snackbarHostState.showSnackbar(
+                                "CSV saved (${chosen.size} transactions)", actionLabel = "Open", duration = SnackbarDuration.Long
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                try {
+                                    context.startActivity(
+                                        android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                            .setDataAndType(uri, "text/csv")
+                                            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    )
+                                } catch (e: android.content.ActivityNotFoundException) {
+                                    snackbarHostState.showSnackbar("No app installed that can open CSV files")
+                                }
+                            }
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("CSV export failed: ${e.message}")
                         }
+                    }
+                }
+
+                /** CSV for one day / month / year (History screen). Empty periods never open the picker or an ad. */
+                fun requestCsv(period: com.autoexpensetracker.pdf.PdfPeriod) {
+                    if (com.autoexpensetracker.pdf.PdfReportBuilder.countIn(allTransactions, period) == 0) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "No transactions in ${com.autoexpensetracker.pdf.PdfReportBuilder.periodLabel(period)} to export"
+                            )
+                        }
+                        return
+                    }
+                    requireProOrReward("CSV export") {
+                        pendingCsv = com.autoexpensetracker.pdf.PdfPeriods.encode(period)
+                        csvExportLauncher.launch(com.autoexpensetracker.backup.CsvExporter.fileName(period, System.currentTimeMillis()))
                     }
                 }
 
@@ -517,7 +554,7 @@ class MainActivity : FragmentActivity() {
                         try {
                             val snapshot = transactionDao.getAllOnce()
                             withContext(Dispatchers.IO) {
-                                val out = context.contentResolver.openOutputStream(uri)
+                                val out = com.autoexpensetracker.util.FileWrite.openForRewrite(context.contentResolver, uri)
                                     ?: throw IllegalStateException("Could not open the destination file")
                                 out.use { com.autoexpensetracker.pdf.PdfReportWriter.export(snapshot, period, it) }
                             }
@@ -709,9 +746,16 @@ class MainActivity : FragmentActivity() {
                                 // in case either is ever reached another way.
                                 onBackupRestoreClick = { requirePro { showBackupDialog = true } },
                                 onCsvExportClick = {
-                                    requireProOrReward("CSV export") {
-                                        val filename = "expense_tracker_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.csv"
-                                        csvExportLauncher.launch(filename)
+                                    // Nothing to export: say so before the picker or an ad.
+                                    if (allTransactions.isEmpty()) {
+                                        scope.launch { snackbarHostState.showSnackbar("No transactions to export yet") }
+                                    } else {
+                                        requireProOrReward("CSV export") {
+                                            pendingCsv = "ALL"
+                                            csvExportLauncher.launch(
+                                                com.autoexpensetracker.backup.CsvExporter.fileName(null, System.currentTimeMillis())
+                                            )
+                                        }
                                     }
                                 },
                                 onImportStatementClick = {
@@ -808,7 +852,8 @@ class MainActivity : FragmentActivity() {
                                 transactionDao = transactionDao,
                                 allTransactions = allTransactions,
                                 isPro = isPro,
-                                onExportPdf = { requestPdf(it) }
+                                onExportPdf = { requestPdf(it) },
+                                onExportCsv = { requestCsv(it) }
                             )
                         } else if (showSearch) {
                             // Overlay, not a destination screen (2026-09-03) —
@@ -870,7 +915,7 @@ class MainActivity : FragmentActivity() {
                         BackupRestoreDialog(
                             onDismiss = { showBackupDialog = false },
                             onExport = {
-                                val filename = "expense_tracker_backup_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.json"
+                                val filename = "expense_tracker_backup_${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}.json"
                                 exportLauncher.launch(filename)
                                 showBackupDialog = false
                             },

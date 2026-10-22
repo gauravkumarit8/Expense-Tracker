@@ -461,7 +461,8 @@ internal fun MonthlyHistoryScreen(
     transactionDao: TransactionDao,
     allTransactions: List<Transaction>,
     isPro: Boolean,
-    onExportPdf: (PdfPeriod) -> Unit
+    onExportPdf: (PdfPeriod) -> Unit,
+    onExportCsv: (PdfPeriod) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -538,7 +539,12 @@ internal fun MonthlyHistoryScreen(
         ) {
             SegmentedPeriodToggle(period = period, onPeriodChange = ::setPeriod)
             Spacer(modifier = Modifier.width(8.dp))
-            PdfExportButton(locked = pdfLocked, onClick = { onExportPdf(pdfPeriod) })
+            ExportMenuButton(
+                pdfLocked = pdfLocked,
+                csvLocked = !isPro,
+                onPdf = { onExportPdf(pdfPeriod) },
+                onCsv = { onExportCsv(pdfPeriod) }
+            )
         }
 
         when (period) {
@@ -923,19 +929,31 @@ private fun MonthYearPickerDialog(initial: MonthRange, onDismiss: () -> Unit, on
     )
 }
 
+/**
+ * One Export button for the period on screen, opening a small menu: PDF
+ * report or CSV spreadsheet. A lock marks what needs Pro (a CSV can also be
+ * unlocked once a month with a rewarded ad - the dialog that follows says so).
+ */
 @Composable
-private fun PdfExportButton(locked: Boolean, onClick: () -> Unit) {
-    IconButton(onClick = onClick) {
-        Box {
-            Icon(Icons.Filled.PictureAsPdf, contentDescription = if (locked) "Export PDF (Pro)" else "Export PDF")
-            if (locked) {
-                Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = null,
-                    modifier = Modifier.size(12.dp).align(Alignment.BottomEnd),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
+private fun ExportMenuButton(pdfLocked: Boolean, csvLocked: Boolean, onPdf: () -> Unit, onCsv: () -> Unit) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { menuOpen = true }) {
+            Icon(Icons.Filled.FileDownload, contentDescription = "Export this period")
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(if (pdfLocked) "PDF report (Pro)" else "PDF report") },
+                leadingIcon = { Icon(Icons.Filled.PictureAsPdf, contentDescription = null) },
+                trailingIcon = if (pdfLocked) ({ Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
+                onClick = { menuOpen = false; onPdf() }
+            )
+            DropdownMenuItem(
+                text = { Text(if (csvLocked) "CSV spreadsheet (Pro)" else "CSV spreadsheet") },
+                leadingIcon = { Icon(Icons.Filled.TableChart, contentDescription = null) },
+                trailingIcon = if (csvLocked) ({ Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
+                onClick = { menuOpen = false; onCsv() }
+            )
         }
     }
 }
@@ -1311,7 +1329,7 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
 
     if (!groupByDay) {
         LazyColumn(contentPadding = PaddingValues(bottom = 96.dp, top = 8.dp)) {
-            items(transactions) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
+            items(transactions, key = { it.id }) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
         }
         return
     }
@@ -1340,7 +1358,7 @@ private fun TransactionList(transactions: List<Transaction>, groupByDay: Boolean
                     }
                 )
             }
-            items(dayTransactions) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
+            items(dayTransactions, key = { it.id }) { tx -> TransactionRow(tx, timeFormat, onClick = { onRowClick(tx) }) }
         }
     }
 }

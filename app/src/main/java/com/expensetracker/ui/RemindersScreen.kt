@@ -188,7 +188,7 @@ internal fun RemindersScreen(reminderDao: ReminderDao, allTransactions: List<Tra
                     }
                 }
             }
-            items(reminders) { reminder -> ReminderRow(reminder, onDelete = { scope.launch { reminderDao.delete(reminder.id) } }) }
+            items(reminders, key = { it.id }) { reminder -> ReminderRow(reminder, onDelete = { scope.launch { reminderDao.delete(reminder.id) } }) }
         }
     }
 }

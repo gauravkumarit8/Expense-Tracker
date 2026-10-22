@@ -214,7 +214,7 @@ private fun OnboardingTransparencyPage() {
     val points = listOf(
         Icons.Filled.NotificationsActive to "We only read notifications from your banking, UPI, and messaging apps — never chats, social apps, or anything else.",
         Icons.Filled.Bolt to "We pull out just the amount, direction, date, and merchant. The original message text is discarded right after — it's never saved.",
-        Icons.Filled.CloudOff to "Nothing leaves your phone. Transactions are encrypted and stored only on this device — there's no server to send it to.",
+        Icons.Filled.CloudOff to "Your transactions never leave your phone. They're encrypted and stored only on this device — there's no server to send them to.",
         Icons.Filled.Block to "This app never asks for SMS permissions. Android's Notification Access is the only way we read alerts, and you control it from Settings any time."
     )
     points.forEach { (icon, text) ->

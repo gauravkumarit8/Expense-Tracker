@@ -55,6 +55,7 @@ object OwnCsv {
         val dateIdx = col("date")
         val timeIdx = col("time")
         val tsIdx = col("timestampms")
+        val tsSecIdx = col("timestamps")
         val dirIdx = col("direction")
         val amountIdx = col("amount")
         val merchantIdx = col("merchant")
@@ -65,7 +66,7 @@ object OwnCsv {
         val balanceIdx = col("balanceafter")
         val reviewIdx = col("needsreview")
 
-        if (dirIdx < 0 || amountIdx < 0 || (dateIdx < 0 && tsIdx < 0)) {
+        if (dirIdx < 0 || amountIdx < 0 || (dateIdx < 0 && tsIdx < 0 && tsSecIdx < 0)) {
             throw ParseException("This doesn't look like a file exported from Expense Tracker")
         }
 
@@ -80,7 +81,7 @@ object OwnCsv {
 
             val direction = parseDirection(get(dirIdx))
             val amount = parseAmount(get(amountIdx))
-            val ts = parseTimestamp(get(tsIdx), get(dateIdx), get(timeIdx), dateFormats, timeFormats)
+            val ts = parseTimestamp(get(tsIdx), get(tsSecIdx), get(dateIdx), get(timeIdx), dateFormats, timeFormats)
             if (direction == null || amount == null || ts == null) { skipped++; continue }
 
             val bank = unguard(get(bankIdx)).trim()
@@ -157,6 +158,9 @@ object OwnCsv {
      * are read across lines rather than line by line. Skips a leading BOM
      * and blank records.
      */
+    /** Test-visible name for [parseRecords]. */
+    internal fun parseRecordsForTest(text: String): List<List<String>> = parseRecords(text)
+
     internal fun parseRecords(text: String): List<List<String>> {
         val records = ArrayList<List<String>>()
         var fields = ArrayList<String>()
@@ -256,18 +260,26 @@ object OwnCsv {
 
     private fun parseTimestamp(
         tsRaw: String,
+        tsSecRaw: String,
         dateRaw: String,
         timeRaw: String,
         dateFormats: List<SimpleDateFormat>,
         timeFormats: List<SimpleDateFormat>
     ): Long? {
-        // The exact epoch-millis column wins when it is a plain whole number.
-        // A spreadsheet that has re-saved the file may have turned it into
-        // 1.76E+12, which has lost digits - that falls through to Date + Time.
+        // The exact epoch column wins when it is a plain whole number (older
+        // files: milliseconds; current files: seconds). A spreadsheet that has
+        // re-saved the file may have turned it into 1.76E+12, which has lost
+        // digits - that falls through to Date + Time.
         val ts = asciiDigits(tsRaw.trim())
         if (ts.length in 12..13 && ts.all { it in '0'..'9' }) {
             val v = ts.toLongOrNull()
             if (v != null && v in MIN_TS..MAX_TS) return v
+        }
+        // Current exports write whole epoch seconds (10 digits) instead.
+        val sec = asciiDigits(tsSecRaw.trim())
+        if (sec.length == 10 && sec.all { it in '0'..'9' }) {
+            val v = sec.toLongOrNull()
+            if (v != null && v * 1000L in MIN_TS..MAX_TS) return v * 1000L
         }
         val dateText = asciiDigits(dateRaw.trim())
         if (dateText.isEmpty()) return null
