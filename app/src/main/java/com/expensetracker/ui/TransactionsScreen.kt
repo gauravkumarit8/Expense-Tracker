@@ -27,6 +27,9 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import com.autoexpensetracker.ads.SearchNativeAd
 import com.autoexpensetracker.pdf.PdfAccessPolicy
 import com.autoexpensetracker.pdf.PdfPeriod
+import com.autoexpensetracker.util.CategoryRuleActions
+import com.autoexpensetracker.util.CategoryRuleStore
+import com.autoexpensetracker.util.CategoryRules
 import com.autoexpensetracker.util.RecentSearchStore
 import com.autoexpensetracker.util.SearchLogic
 import androidx.compose.material.icons.Icons
@@ -142,6 +145,7 @@ internal fun TransactionsScreen(
     onSeeAllMonths: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
 
     // Local Sent/Received quick-filter (2026-09-03 fix) — restores the
@@ -204,8 +208,16 @@ internal fun TransactionsScreen(
     selectedTransaction?.let { tx ->
         TransactionDetailDialog(
             transaction = tx,
+            allTransactions = allTransactions,
             onDismiss = { selectedTransaction = null },
             onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null },
+            onSaveForMerchant = { updated ->
+                scope.launch {
+                    transactionDao.update(updated)
+                    CategoryRuleActions.applyToMerchant(context, transactionDao, tx, updated)
+                }
+                selectedTransaction = null
+            },
             onDelete = { scope.launch { transactionDao.delete(tx.id) }; selectedTransaction = null }
         )
     }
@@ -440,8 +452,16 @@ internal fun SearchReviewScreen(
     selectedTransaction?.let { tx ->
         TransactionDetailDialog(
             transaction = tx,
+            allTransactions = allTransactions,
             onDismiss = { selectedTransaction = null },
             onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null },
+            onSaveForMerchant = { updated ->
+                scope.launch {
+                    transactionDao.update(updated)
+                    CategoryRuleActions.applyToMerchant(context, transactionDao, tx, updated)
+                }
+                selectedTransaction = null
+            },
             onDelete = { scope.launch { transactionDao.delete(tx.id) }; selectedTransaction = null }
         )
     }
@@ -661,8 +681,16 @@ internal fun MonthlyHistoryScreen(
     selectedTransaction?.let { tx ->
         TransactionDetailDialog(
             transaction = tx,
+            allTransactions = allTransactions,
             onDismiss = { selectedTransaction = null },
             onSave = { updated -> scope.launch { transactionDao.update(updated) }; selectedTransaction = null },
+            onSaveForMerchant = { updated ->
+                scope.launch {
+                    transactionDao.update(updated)
+                    CategoryRuleActions.applyToMerchant(context, transactionDao, tx, updated)
+                }
+                selectedTransaction = null
+            },
             onDelete = { scope.launch { transactionDao.delete(tx.id) }; selectedTransaction = null }
         )
     }
@@ -1459,7 +1487,17 @@ private fun DateRangeDialog(initialFrom: Long?, initialTo: Long?, onDismiss: () 
 // ---------- TRANSACTION DETAIL / EDIT DIALOG ----------
 
 @Composable
-private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> Unit, onSave: (Transaction) -> Unit, onDelete: () -> Unit) {
+private fun TransactionDetailDialog(
+    transaction: Transaction,
+    allTransactions: List<Transaction>,
+    onDismiss: () -> Unit,
+    onSave: (Transaction) -> Unit,
+    onSaveForMerchant: (Transaction) -> Unit,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    // Set when a category change should be offered to every transaction from the same merchant.
+    var pendingRule by remember { mutableStateOf<Transaction?>(null) }
     val isManual = transaction.bankOrSource == "Cash"
     // Needs-review transactions get full editing too (amount/direction/merchant),
     // since that's exactly the case where the parser's guess needs correcting —
@@ -1485,6 +1523,31 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
             dismissButton = { TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") } }
         )
         return
+    }
+
+    pendingRule?.let { updated ->
+        val newCategory = Category.fromNameOrNull(updated.category) ?: Category.OTHER
+        val keys = listOfNotNull(
+            CategoryRules.keyFor(updated.merchantOrContact),
+            CategoryRules.keyFor(transaction.merchantOrContact)
+        ).toSet()
+        val others = CategoryRules.idsToChange(allTransactions, keys, newCategory.name, transaction.id).size
+        AlertDialog(
+            // Tapping outside goes back to editing rather than saving either way.
+            onDismissRequest = { pendingRule = null },
+            title = { Text("Always use ${newCategory.emoji} ${newCategory.label}?") },
+            text = {
+                Text(
+                    (if (others > 0) {
+                        "$others other transaction${if (others == 1) "" else "s"} from ${updated.merchantOrContact} will change too, and future ones will use it automatically."
+                    } else {
+                        "Future transactions from ${updated.merchantOrContact} will use it automatically."
+                    }) + " You can undo this in Settings > Category rules."
+                )
+            },
+            confirmButton = { TextButton(onClick = { onSaveForMerchant(updated) }) { Text("Yes, all") } },
+            dismissButton = { TextButton(onClick = { onSave(updated) }) { Text("Just this one") } }
+        )
     }
 
     AlertDialog(
@@ -1579,7 +1642,13 @@ private fun TransactionDetailDialog(transaction: Transaction, onDismiss: () -> U
                             tags = tags.trim().takeIf { it.isNotBlank() }
                         )
                     }
-                    onSave(updated)
+                    // A real category change on a merchant we can identify is offered
+                    // to every transaction from that merchant (and to future ones).
+                    if (CategoryRules.shouldAsk(CategoryRuleStore.getAll(context), updated.merchantOrContact, transaction.category, category.name)) {
+                        pendingRule = updated
+                    } else {
+                        onSave(updated)
+                    }
                 },
                 enabled = !fullyEditable || amountText.toDoubleOrNull() != null
             ) { Text(if (transaction.needsReview) "Save & mark reviewed" else "Save") }

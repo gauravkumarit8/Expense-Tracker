@@ -378,7 +378,8 @@ class MainActivity : FragmentActivity() {
                                 reminders = reminderDao.getAllOnce(),
                                 budgets = budgetDao.getAllOnce(),
                                 manualBalances = ManualBalanceStore.exportAll(context),
-                                hiddenBalanceSources = ManualBalanceStore.getHidden(context).toList()
+                                hiddenBalanceSources = ManualBalanceStore.getHidden(context).toList(),
+                                categoryRules = com.autoexpensetracker.util.CategoryRuleStore.exportAll(context)
                             )
                             // File I/O + JSON encoding off the main thread (a
                             // Drive-backed document URI can block for seconds).
@@ -490,6 +491,10 @@ class MainActivity : FragmentActivity() {
                             // backups don't - leave current manual balances alone).
                             payload.manualBalances?.let {
                                 ManualBalanceStore.replaceAll(context, it, payload.hiddenBalanceSources.orEmpty().toSet())
+                            }
+                            // Same rule for category rules: only when the backup has them.
+                            payload.categoryRules?.let {
+                                com.autoexpensetracker.util.CategoryRuleStore.replaceAll(context, it)
                             }
 
                             snackbarHostState.showSnackbar("Restored ${payload.transactions.size} transactions")
@@ -817,6 +822,7 @@ class MainActivity : FragmentActivity() {
                                         com.autoexpensetracker.util.BudgetWarningStore.clearAll(context)
                                         com.autoexpensetracker.util.PriceChangeStore.clearAll(context)
                                         com.autoexpensetracker.util.RecentSearchStore.clearAll(context)
+                                        com.autoexpensetracker.util.CategoryRuleStore.clearAll(context)
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
                                 },
