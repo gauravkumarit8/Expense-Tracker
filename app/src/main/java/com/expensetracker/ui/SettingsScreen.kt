@@ -454,6 +454,13 @@ internal fun SettingsScreen(
                 subtitle = "What the app reads, what it stores, and what it never sends",
                 onClick = { AppLinks.privacyPolicy(context) }
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.Email,
+                title = "Contact support",
+                subtitle = "Report a problem or suggest something",
+                onClick = { AppLinks.contactSupport(context) }
+            )
             Spacer(modifier = Modifier.height(20.dp))
         }
 
