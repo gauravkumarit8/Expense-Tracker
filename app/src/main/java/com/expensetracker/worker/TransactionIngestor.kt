@@ -8,6 +8,7 @@ import com.autoexpensetracker.listener.CaptureHealthStore
 import com.autoexpensetracker.data.InsertOutcome
 import com.autoexpensetracker.parser.TransactionParser
 import com.autoexpensetracker.review.ReviewPromptStore
+import com.autoexpensetracker.util.CategoryRuleStore
 import com.autoexpensetracker.util.UnusualSpendDetector
 import com.autoexpensetracker.util.BudgetWarningDetector
 import com.autoexpensetracker.util.SubscriptionPriceChangeDetector
@@ -82,8 +83,10 @@ object TransactionIngestor {
     /** Parse + dedup + insert. Throws on unexpected failure so callers can retry. */
     suspend fun ingest(context: Context, sender: String, text: String, timestampMillis: Long) {
         val appContext = context.applicationContext
-        val transaction = TransactionParser(appContext).parse(sender, text, timestampMillis)
+        val parsed = TransactionParser(appContext).parse(sender, text, timestampMillis)
             ?: return // not a transaction, discard silently
+        // A merchant the user has made a category rule for keeps that category.
+        val transaction = CategoryRuleStore.applyTo(appContext, parsed)
 
         val dao = AppDatabase.getInstance(appContext).transactionDao()
 

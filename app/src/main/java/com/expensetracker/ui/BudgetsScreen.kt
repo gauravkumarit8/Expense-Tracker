@@ -119,7 +119,7 @@ internal fun BudgetsScreen(budgetDao: BudgetDao, allTransactions: List<Transacti
             Text("Transfers aren't budgeted: they move money rather than spend it.", style = MaterialTheme.typography.bodySmall, color = MutedText)
             Spacer(modifier = Modifier.height(12.dp))
         }
-        items(Category.entries.filter { BudgetPolicy.isBudgetable(it) }) { cat ->
+        items(Category.entries.filter { BudgetPolicy.isBudgetable(it) }, key = { it.name }) { cat ->
             val limit = budgets.firstOrNull { it.category == cat.name }?.monthlyLimit
             val spent = spendByCategory[cat] ?: 0.0
             BudgetRow(cat, limit, spent, onClick = { editingCategory = cat })

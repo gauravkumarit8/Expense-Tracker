@@ -27,7 +27,9 @@ data class BackupPayload(
     // alone instead of wiping them, and older app versions simply ignore
     // the extra keys (ignoreUnknownKeys). formatVersion stays 1.
     val manualBalances: List<ManualBalanceStore.Entry>? = null,
-    val hiddenBalanceSources: List<String>? = null
+    val hiddenBalanceSources: List<String>? = null,
+    /** Merchant category rules, one encoded line each (see CategoryRules.encodeLine). Null in older backups. */
+    val categoryRules: List<String>? = null
 )
 
 object BackupSerializer {

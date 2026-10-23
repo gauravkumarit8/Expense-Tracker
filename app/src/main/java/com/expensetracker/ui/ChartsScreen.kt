@@ -37,6 +37,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -279,7 +282,7 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
             }
         }
         if (byCategory.isNotEmpty()) {
-            items(byCategory) { (category, amount) ->
+            items(byCategory, key = { it.first.name }) { (category, amount) ->
                 CategoryBarRow(category, amount, total, trackColor)
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -443,13 +446,13 @@ private fun BalanceRow(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = MutedText)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { showHistory = true }, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = { showHistory = true }, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = MutedText, modifier = Modifier.size(18.dp))
                     }
-                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onEdit, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = MutedText, modifier = Modifier.size(18.dp))
                     }
-                    IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
                     }
                 }
@@ -679,7 +682,13 @@ private fun SummaryStat(label: String, value: String, valueColor: Color) {
 /** Ring split by category, total in the middle. */
 @Composable
 private fun SpendDonut(slices: List<Pair<Category, Double>>, total: Double, trackColor: Color) {
-    Box(modifier = Modifier.size(190.dp), contentAlignment = Alignment.Center) {
+    // The ring is a drawing, so a screen reader needs the same information as text.
+    val description = "Spending by category, total ${formatInrWhole(total)}. " +
+        slices.joinToString(". ") { "${it.first.label} ${ChartMath.percentLabel(it.second, total)}, ${formatInrWhole(it.second)}" }
+    Box(
+        modifier = Modifier.size(190.dp).clearAndSetSemantics { contentDescription = description },
+        contentAlignment = Alignment.Center
+    ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = 28.dp.toPx()
             val topLeft = Offset(stroke / 2f, stroke / 2f)
@@ -772,7 +781,10 @@ private fun DailySpendChart(daily: DoubleArray, total: Double, elapsedDays: Int,
         )
     }
     Spacer(modifier = Modifier.height(10.dp))
-    Canvas(modifier = Modifier.fillMaxWidth().height(110.dp)) {
+    val chartDescription = "Bar chart of daily spending in $monthLabel" +
+        (if (peak >= 0) ", highest on day ${peak + 1} at ${formatInrWhole(daily[peak])}" else "") +
+        ", average ${formatInrWhole(avg)} a day"
+    Canvas(modifier = Modifier.fillMaxWidth().height(110.dp).semantics { contentDescription = chartDescription }) {
         val n = daily.size
         val slot = size.width / n
         val barW = slot * 0.62f
@@ -885,6 +897,10 @@ private fun SpendTrendChart(
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable(onClick = { onSelectMonth(t.month) })
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "${t.month.label()}: spent ${formatInrWhole(t.spent)}, received ${formatInrWhole(t.received)}" +
+                            (if (isSelected) ", selected" else "")
+                    }
             ) {
                 Box(
                     modifier = Modifier.fillMaxWidth().height(chartHeight),

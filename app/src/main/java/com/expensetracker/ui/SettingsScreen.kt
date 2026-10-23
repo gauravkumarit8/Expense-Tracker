@@ -67,6 +67,7 @@ import com.autoexpensetracker.util.OnboardingStore
 import com.autoexpensetracker.util.BatteryOptimizationHelper
 import com.autoexpensetracker.util.AppLockManager
 import com.autoexpensetracker.util.BiometricAuthHelper
+import com.autoexpensetracker.util.CategoryRuleStore
 import com.autoexpensetracker.util.DismissedSuggestionsStore
 import com.autoexpensetracker.util.RecurringDetector
 import com.autoexpensetracker.util.RecurringSuggestion
@@ -346,6 +347,20 @@ internal fun SettingsScreen(
         // deliberate simplicity tradeoff, not a limitation of the
         // requirePro() gate itself (see the tradeoff note in the Decision
         // Log if reconsidering a grayed-out variant later).
+        item {
+            val ruleContext = LocalContext.current
+            var showRules by remember { mutableStateOf(false) }
+            // Re-read when the dialog closes so the count reflects removals.
+            val ruleCount = remember(showRules) { CategoryRuleStore.getAll(ruleContext).size }
+            SettingsRow(
+                icon = Icons.Filled.Rule,
+                title = "Category rules",
+                subtitle = if (ruleCount == 0) "Merchants that always use a fixed category" else "$ruleCount merchant${if (ruleCount == 1) "" else "s"} always use a fixed category",
+                onClick = { showRules = true }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (showRules) CategoryRulesDialog(onDismiss = { showRules = false })
+        }
         if (isPro) {
             item {
                 SettingsRow(
@@ -431,6 +446,20 @@ internal fun SettingsScreen(
                 title = "Share with a friend",
                 subtitle = "Send a link to the Play Store listing",
                 onClick = { AppLinks.share(context) }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.PrivacyTip,
+                title = "Privacy policy",
+                subtitle = "What the app reads, what it stores, and what it never sends",
+                onClick = { AppLinks.privacyPolicy(context) }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsRow(
+                icon = Icons.Filled.Email,
+                title = "Contact support",
+                subtitle = "Report a problem or suggest something",
+                onClick = { AppLinks.contactSupport(context) }
             )
             Spacer(modifier = Modifier.height(20.dp))
         }

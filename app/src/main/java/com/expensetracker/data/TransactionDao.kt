@@ -32,6 +32,10 @@ interface TransactionDao {
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun delete(id: Long)
 
+    /** Sets one category on many rows at once (merchant category rules). No schema change. */
+    @Query("UPDATE transactions SET category = :category WHERE id IN (:ids)")
+    suspend fun updateCategoryForIds(ids: List<Long>, category: String)
+
     @Query("SELECT * FROM transactions ORDER BY timestampMillis DESC")
     fun getAll(): Flow<List<Transaction>>
 

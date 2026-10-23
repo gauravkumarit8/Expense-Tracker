@@ -33,6 +33,35 @@ internal object AppLinks {
         }
     }
 
+    /** The public privacy policy page (same one linked from the Play listing). */
+    const val PRIVACY_POLICY_URL = "https://grvthakur.bid/expense-tracker/privacy-policy.html"
+
+    /** The support address published in the privacy policy. */
+    const val SUPPORT_EMAIL = "gaurav954624@gmail.com"
+
+    /** Opens the user's mail app with a new message to support. Nothing is sent from the app itself. */
+    fun contactSupport(context: Context) {
+        try {
+            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                data = Uri.parse("mailto:")
+                putExtra(Intent.EXTRA_EMAIL, arrayOf(SUPPORT_EMAIL))
+                putExtra(Intent.EXTRA_SUBJECT, "Auto Expense Tracker - feedback")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (ignored: ActivityNotFoundException) {
+            // No mail app installed.
+        }
+    }
+
+    fun privacyPolicy(context: Context) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_POLICY_URL)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (ignored: ActivityNotFoundException) {
+            // No browser on the phone; nothing sensible left to do.
+        }
+    }
+
     fun share(context: Context) {
         val link = "https://play.google.com/store/apps/details?id=${context.packageName}"
         val send = Intent(Intent.ACTION_SEND).apply {
