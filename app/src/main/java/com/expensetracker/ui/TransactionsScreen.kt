@@ -100,6 +100,7 @@ import com.autoexpensetracker.util.ThemePreferenceStore
 import com.autoexpensetracker.util.DailyCheckInStore
 import com.autoexpensetracker.worker.DailyCheckInScheduler
 import com.autoexpensetracker.util.formatInr
+import com.autoexpensetracker.util.formatInrCompact
 import com.autoexpensetracker.util.formatInrWhole
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
@@ -1054,7 +1055,7 @@ private fun SearchBar(
 ) {
     OutlinedTextField(
         value = query, onValueChange = onQueryChange,
-        placeholder = { Text("Merchant, category, note, amount") },
+        placeholder = { Text("Merchant, category, amount", maxLines = 1) },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, contentDescription = "Clear search") }
@@ -1279,7 +1280,7 @@ private fun StatCard(label: String, amount: Double, color: Color, isActive: Bool
         Column(modifier = Modifier.padding(12.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${formatInr(amount)}",
+                formatInrCompact(amount),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = color,
@@ -1329,7 +1330,7 @@ private fun NetSummaryCard(
             Column(modifier = Modifier.padding(12.dp)) {
                 Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
                 Text(
-                    "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
+                    "${if (net >= 0) "+" else "−"}${formatInrCompact(kotlin.math.abs(net))}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = netColor,
