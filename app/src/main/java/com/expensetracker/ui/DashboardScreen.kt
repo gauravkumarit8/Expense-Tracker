@@ -94,7 +94,12 @@ internal fun DashboardScreen(
     onSeeCharts: () -> Unit,
     onSeeBudgets: () -> Unit,
     onSeeReminders: () -> Unit,
-    onAddTransaction: () -> Unit
+    onAddTransaction: () -> Unit,
+    notificationAccessGranted: Boolean,
+    transactionsLoaded: Boolean,
+    onEnableNotificationAccess: () -> Unit,
+    onImportHistory: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val monthRange = remember { MonthRange.current() }
     val monthTransactions = remember(allTransactions) {
@@ -198,6 +203,19 @@ internal fun DashboardScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            // Until the first transaction arrives, say what is happening and what to expect.
+            if (transactionsLoaded && allTransactions.isEmpty()) {
+                item {
+                    FirstRunCard(
+                        notificationAccessGranted = notificationAccessGranted,
+                        onEnableNotificationAccess = onEnableNotificationAccess,
+                        onImportHistory = onImportHistory,
+                        onAddTransaction = onAddTransaction,
+                        onOpenSettings = onOpenSettings
+                    )
+                }
+            }
+
             item {
                 Column {
                     Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = MutedText)

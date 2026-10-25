@@ -200,6 +200,11 @@ private fun OnboardingWelcomePage() {
         "Expense Tracker reads transaction alerts from your banking and UPI apps — things like \"Rs.500 debited...\" or \"You received Rs.1200\" — and logs them for you automatically. No typing every purchase by hand.",
         style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MutedText
     )
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        "It starts tracking from the moment you set it up. Past transactions aren't read, but you can bring in older history from a bank statement later.",
+        style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MutedText
+    )
 }
 
 @Composable
