@@ -282,7 +282,7 @@ internal fun SettingsScreen(
             SettingsRow(
                 icon = if (isPro) Icons.Filled.WorkspacePremium else Icons.Filled.Star,
                 title = if (isPro) "Expense Tracker Pro" else "Upgrade to Pro",
-                subtitle = if (isPro) "Thanks for supporting the app!" else "CSV export and more, ad-free, no lending upsells",
+                subtitle = if (isPro) "Thanks for supporting the app!" else "Ad-free, backup & restore, CSV import/export, full PDF reports",
                 onClick = onUpgradeClick,
                 tint = if (isPro) SemanticGold else SemanticIndigo
             )
@@ -624,7 +624,7 @@ internal fun UpgradeDialog(products: List<ProductDetails>, onDismiss: () -> Unit
         text = {
             Column {
                 Text(
-                    "Support development and unlock CSV export, backup & restore, and an ad-free experience. No lending upsells, no data ever leaves your device.",
+                    "Support development and unlock ad-free use, backup & restore, unlimited CSV export and import, and PDF reports for any period. No lending upsells, and your transactions stay on your device.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(16.dp))

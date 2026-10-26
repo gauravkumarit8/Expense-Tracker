@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.SearchNativeAd
 import com.autoexpensetracker.pdf.PdfAccessPolicy
 import com.autoexpensetracker.pdf.PdfPeriod
@@ -46,6 +47,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -100,6 +103,7 @@ import com.autoexpensetracker.util.ThemePreferenceStore
 import com.autoexpensetracker.util.DailyCheckInStore
 import com.autoexpensetracker.worker.DailyCheckInScheduler
 import com.autoexpensetracker.util.formatInr
+import com.autoexpensetracker.util.formatInrCompact
 import com.autoexpensetracker.util.formatInrWhole
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
@@ -277,7 +281,6 @@ internal fun SearchReviewScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -295,16 +298,9 @@ internal fun SearchReviewScreen(
     var browseAll by rememberSaveable { mutableStateOf(false) }
     var recentSearches by remember { mutableStateOf(RecentSearchStore.getAll(context)) }
 
-    // Opens with the keyboard up - the screen exists to be typed into. Only
-    // once there are transactions: with none, the search field isn't on screen
-    // and requestFocus() would throw because the requester has no target.
-    val hasTransactions = allTransactions.isNotEmpty()
-    LaunchedEffect(hasTransactions) {
-        if (hasTransactions) {
-            runCatching { focusRequester.requestFocus() }
-            keyboard?.show()
-        }
-    }
+    // The keyboard does NOT open by itself. It used to, and it covered the
+    // recent searches, the quick filters and the sponsored card the moment the
+    // screen opened; the keyboard now appears when the user taps the field.
 
     fun rememberCurrentQuery() {
         if (SearchLogic.normalizeQuery(searchQuery).length >= 2) {
@@ -355,7 +351,6 @@ internal fun SearchReviewScreen(
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                focusRequester = focusRequester,
                 onSearch = { rememberCurrentQuery(); keyboard?.hide() }
             )
 
@@ -414,11 +409,18 @@ internal fun SearchReviewScreen(
                     onSentClick = { directionFilter = if (directionFilter == DirectionFilter.SENT) DirectionFilter.ALL else DirectionFilter.SENT },
                     onReceivedClick = { directionFilter = if (directionFilter == DirectionFilter.RECEIVED) DirectionFilter.ALL else DirectionFilter.RECEIVED }
                 )
-                TransactionList(
-                    filtered,
-                    groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST,
-                    onRowClick = { rememberCurrentQuery(); selectedTransaction = it }
-                )
+                // The list takes the space above the banner (weight), so the banner is
+                // always visible under it instead of being pushed off screen.
+                Box(modifier = Modifier.weight(1f)) {
+                    TransactionList(
+                        filtered,
+                        groupByDay = sortOption == SortOption.DATE_NEWEST || sortOption == SortOption.DATE_OLDEST,
+                        onRowClick = { rememberCurrentQuery(); selectedTransaction = it }
+                    )
+                }
+                // A banner only while there is a real list of results on screen: never on the
+                // idle screen (it has its own sponsored card) and never on "no results".
+                if (showAds) BannerAdView()
             }
             }
         }
@@ -1049,12 +1051,11 @@ private fun filterTransactions(
 private fun SearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
-    focusRequester: FocusRequester,
     onSearch: () -> Unit
 ) {
     OutlinedTextField(
         value = query, onValueChange = onQueryChange,
-        placeholder = { Text("Merchant, category, note, amount") },
+        placeholder = { Text("Merchant, category, amount", maxLines = 1) },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, contentDescription = "Clear search") }
@@ -1063,7 +1064,7 @@ private fun SearchBar(
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { onSearch() }),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focusRequester)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
     )
 }
 
@@ -1278,13 +1279,12 @@ private fun StatCard(label: String, amount: Double, color: Color, isActive: Bool
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MutedText, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                "${formatInr(amount)}",
+            FitAmountText(
+                full = formatInr(amount),
+                compact = formatInrCompact(amount),
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
                 color = color,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -1316,38 +1316,61 @@ private fun NetSummaryCard(
     val received = remember(transactions) { transactions.filter { it.direction == Direction.RECEIVED }.sumOf { it.amount } }
     val net = received - sent
     val netColor = if (net >= 0) BrandGreen else SemanticRed // green-800 / red-800
+    val netSign = if (net >= 0) "+" else "−"
+    val netFull = netSign + formatInr(kotlin.math.abs(net))
+    val netCompact = netSign + formatInrCompact(kotlin.math.abs(net))
 
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Surface(
-            modifier = Modifier.weight(1.15f),
-            shape = RoundedCornerShape(12.dp),
-            color = netColor.copy(alpha = 0.12f)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
-                Text(
-                    "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = netColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+    // Net, Sent and Received share one row while their FULL amounts fit; when they
+    // would not (about one lakh and up on a narrow phone), Net takes a row of its own
+    // and Sent / Received share the one below, so no amount is ever cut off.
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val rowStyle = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        // 16dp screen padding each side, 8dp between the three cards, 12dp padding inside each.
+        val unitPx = with(density) { (maxWidth - 32.dp - 16.dp).toPx() } / 3.15f
+        val innerPadPx = with(density) { 24.dp.toPx() }
+        fun fits(text: String, units: Float): Boolean =
+            measurer.measure(text = text, style = rowStyle, maxLines = 1, softWrap = false).size.width <= units * unitPx - innerPadPx
+        val singleRow = fits(netFull, 1.15f) && fits(formatInr(sent), 1f) && fits(formatInr(received), 1f)
+
+        @Composable
+        fun NetCard(modifier: Modifier) {
+            Surface(modifier = modifier, shape = RoundedCornerShape(12.dp), color = netColor.copy(alpha = 0.12f)) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Net", style = MaterialTheme.typography.labelMedium, color = MutedText)
+                    FitAmountText(
+                        full = netFull,
+                        compact = netCompact,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = netColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
-        StatCard(
-            "Sent", sent, SemanticRed,
-            isActive = directionFilter == DirectionFilter.SENT,
-            modifier = Modifier.weight(1f), onClick = onSentClick
-        )
-        StatCard(
-            "Received", received, BrandGreen,
-            isActive = directionFilter == DirectionFilter.RECEIVED,
-            modifier = Modifier.weight(1f), onClick = onReceivedClick
-        )
+
+        if (singleRow) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                NetCard(Modifier.weight(1.15f))
+                StatCard("Sent", sent, SemanticRed, directionFilter == DirectionFilter.SENT, Modifier.weight(1f), onSentClick)
+                StatCard("Received", received, BrandGreen, directionFilter == DirectionFilter.RECEIVED, Modifier.weight(1f), onReceivedClick)
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                NetCard(Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Sent", sent, SemanticRed, directionFilter == DirectionFilter.SENT, Modifier.weight(1f), onSentClick)
+                    StatCard("Received", received, BrandGreen, directionFilter == DirectionFilter.RECEIVED, Modifier.weight(1f), onReceivedClick)
+                }
+            }
+        }
     }
 }
 

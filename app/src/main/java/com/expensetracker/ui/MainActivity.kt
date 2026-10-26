@@ -69,6 +69,7 @@ import com.autoexpensetracker.ads.BannerAdView
 import com.autoexpensetracker.ads.ConsentManager
 import com.autoexpensetracker.billing.BillingManager
 import com.autoexpensetracker.ads.RewardedAdManager
+import com.autoexpensetracker.util.AdGate
 import com.autoexpensetracker.util.RewardLogic
 import com.autoexpensetracker.util.RewardStore
 import com.autoexpensetracker.update.AppUpdateHelper
@@ -342,7 +343,15 @@ class MainActivity : FragmentActivity() {
                 ) { }
 
                 var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
-                val allTransactions by transactionDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+                // null until the database has answered. Without that, "no transactions yet" would be
+                // briefly true on every launch and the first-run card would flash for existing users.
+                val loadedTransactions: List<Transaction>? by transactionDao.getAll()
+                    .collectAsStateWithLifecycle<List<Transaction>?>(initialValue = null)
+                val allTransactions: List<Transaction> = loadedTransactions ?: emptyList()
+                val transactionsLoaded = loadedTransactions != null
+                // One rule for the banner, the Search card and the Settings banner. It
+                // includes "at least one transaction": no ads before the app has shown any value.
+                val adsAllowed = AdGate.showAds(isPro, canRequestAds, adFreeToday, allTransactions.size)
                 // Drives the red badge on the Search top-bar icon.
                 val needsReviewCount = remember(allTransactions) { allTransactions.count { it.needsReview } }
                 var showManualEntry by remember { mutableStateOf(false) }
@@ -682,7 +691,7 @@ class MainActivity : FragmentActivity() {
                             // resolved (canRequestAds). Lives here, not inside
                             // each screen, so the ad is loaded once and keeps
                             // showing while the user switches tabs.
-                            if (!isPro && canRequestAds && !adFreeToday) {
+                            if (adsAllowed) {
                                 BannerAdView()
                             }
                             NavigationBar {
@@ -826,7 +835,7 @@ class MainActivity : FragmentActivity() {
                                         snackbarHostState.showSnackbar("All data deleted")
                                     }
                                 },
-                                canRequestAds = canRequestAds,
+                                canRequestAds = adsAllowed,
                                 privacyOptionsRequired = privacyOptionsRequired,
                                 themeMode = themeMode,
                                 onThemeModeChange = { newMode ->
@@ -869,7 +878,7 @@ class MainActivity : FragmentActivity() {
                                 transactionDao = transactionDao,
                                 allTransactions = allTransactions,
                                 // Same rule as the banner: free users, consent resolved, not in an ad-free day.
-                                showAds = !isPro && canRequestAds && !adFreeToday
+                                showAds = adsAllowed
                             )
                         } else {
                             when (screen) {
@@ -881,7 +890,17 @@ class MainActivity : FragmentActivity() {
                                     onSeeCharts = { screen = Screen.CHARTS },
                                     onSeeBudgets = { screen = Screen.BUDGETS },
                                     onSeeReminders = { screen = Screen.REMINDERS },
-                                    onAddTransaction = { showManualEntry = true }
+                                    onAddTransaction = { showManualEntry = true },
+                                    notificationAccessGranted = notificationAccessGranted,
+                                    transactionsLoaded = transactionsLoaded,
+                                    onEnableNotificationAccess = { context.startActivity(NotificationAccessHelper.settingsIntent()) },
+                                    onImportHistory = {
+                                        requireProOrReward("CSV import") {
+                                            pendingStatementAccountLabel = ""
+                                            showImportStatementDialog = true
+                                        }
+                                    },
+                                    onOpenSettings = { showSettings = true }
                                 )
                                 Screen.TRANSACTIONS -> TransactionsScreen(
                                     transactionDao = transactionDao,

@@ -94,7 +94,12 @@ internal fun DashboardScreen(
     onSeeCharts: () -> Unit,
     onSeeBudgets: () -> Unit,
     onSeeReminders: () -> Unit,
-    onAddTransaction: () -> Unit
+    onAddTransaction: () -> Unit,
+    notificationAccessGranted: Boolean,
+    transactionsLoaded: Boolean,
+    onEnableNotificationAccess: () -> Unit,
+    onImportHistory: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val monthRange = remember { MonthRange.current() }
     val monthTransactions = remember(allTransactions) {
@@ -198,6 +203,19 @@ internal fun DashboardScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            // Until the first transaction arrives, say what is happening and what to expect.
+            if (transactionsLoaded && allTransactions.isEmpty()) {
+                item {
+                    FirstRunCard(
+                        notificationAccessGranted = notificationAccessGranted,
+                        onEnableNotificationAccess = onEnableNotificationAccess,
+                        onImportHistory = onImportHistory,
+                        onAddTransaction = onAddTransaction,
+                        onOpenSettings = onOpenSettings
+                    )
+                }
+            }
+
             item {
                 Column {
                     Text("$greeting 👋", style = MaterialTheme.typography.titleMedium, color = MutedText)
@@ -442,9 +460,14 @@ private fun SincePaydayCard(info: SinceLastSalary) {
 
 @Composable
 private fun MonthSummaryHeroCard(spent: Double, received: Double, net: Double, onClick: () -> Unit) {
+    // Green means the month is net positive; a net-negative month is red, so the
+    // card never shows a loss on a "good news" background.
+    val negative = net < 0
     val gradient = Brush.horizontalGradient(
-        listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer)
+        if (negative) listOf(MaterialTheme.colorScheme.error, MaterialTheme.colorScheme.errorContainer)
+        else listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer)
     )
+    val onColor = if (negative) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -460,35 +483,35 @@ private fun MonthSummaryHeroCard(spent: Double, received: Double, net: Double, o
             Text(
                 "This month's net",
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                color = onColor.copy(alpha = 0.85f)
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 "${if (net >= 0) "+" else "−"}${formatInr(kotlin.math.abs(net))}",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary,
+                color = onColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                HeroStat(label = "Sent", amount = spent)
-                HeroStat(label = "Received", amount = received)
+                HeroStat(label = "Sent", amount = spent, onColor = onColor)
+                HeroStat(label = "Received", amount = received, onColor = onColor)
             }
         }
     }
 }
 
 @Composable
-private fun HeroStat(label: String, amount: Double) {
+private fun HeroStat(label: String, amount: Double, onColor: Color) {
     Column {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = onColor.copy(alpha = 0.85f))
         Text(
             "${formatInr(amount)}",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onPrimary,
+            color = onColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

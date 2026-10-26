@@ -99,7 +99,10 @@ fun BannerAdView(adUnitId: String = AdUnits.banner, modifier: Modifier = Modifie
         modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .padding(vertical = 4.dp)
+            // Extra space under the ad keeps it from touching the navigation bar:
+            // an ad right above the nav icons is easy to hit by accident, which
+            // AdMob counts against the account.
+            .padding(top = 4.dp, bottom = 14.dp)
     }
     AndroidView(modifier = slot, factory = { adView })
 }

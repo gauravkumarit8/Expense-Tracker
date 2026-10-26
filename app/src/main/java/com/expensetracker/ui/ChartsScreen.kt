@@ -760,8 +760,11 @@ private fun CategoryBarRow(category: Category, amount: Double, total: Double, tr
 /** One bar per day of the month, with a dashed daily-average line and the peak day highlighted. */
 @Composable
 private fun DailySpendChart(daily: DoubleArray, total: Double, elapsedDays: Int, monthLabel: String) {
-    val barColor = MaterialTheme.colorScheme.primary
+    // "Spent" is red everywhere in the app (the trend below, the summary card);
+    // it used to be green here, which reads as income. Ordinary days are a softer red,
+    // the busiest day the full red.
     val peakColor = MaterialTheme.colorScheme.error
+    val barColor = peakColor.copy(alpha = 0.55f)
     val lineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
     val baseColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
     val maxDay = daily.maxOrNull() ?: 0.0
