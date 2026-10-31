@@ -18,9 +18,11 @@ import java.util.concurrent.TimeoutException
  * Callers must not persist it — only the returned Transaction (structured
  * fields + hash) should be stored. See REQUIREMENTS.md Security ยง2.
  */
-class TransactionParser(context: Context) {
+class TransactionParser(private val config: BankPatternConfig) {
 
-    private val config = BankPatternsLoader.load(context)
+    /** The normal way: patterns from the bundled bank_patterns.json. */
+    constructor(context: Context) : this(BankPatternsLoader.load(context))
+
     // Whole-word matchers for excludeKeywords. These used to be plain
     // substring checks, so "OTP" matched inside merchant names like DotPe
     // or Hotpot and "ipo" matched inside Tripod, silently dropping real
@@ -137,10 +139,23 @@ class TransactionParser(context: Context) {
         if (amountStr == null && direction != Direction.UNKNOWN) {
             amountStr = safeFind(FALLBACK_AMOUNT_REGEX, text)
                 ?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+                ?: lastResortAmount(text)
+        }
+
+        // No debit/credit wording at all. Before, this always became a "needs review"
+        // row - which is where the +0.00 "Unknown" rows came from (balance updates,
+        // offers, notices). Now it is kept only when it is plainly a card/ATM/POS
+        // transaction with an amount; everything else is not a transaction.
+        if (direction == Direction.UNKNOWN) {
+            val hinted = UNKNOWN_DIRECTION_HINTS.any { lower.contains(it) }
+            amountStr = if (hinted) lastResortAmount(text) else null
+            if (amountStr == null) return null
         }
 
         val amount = amountStr?.replace(",", "")?.toDoubleOrNull()
-        val trimmedCounterparty = counterparty?.trim()?.takeIf { it.isNotBlank() }
+        // The per-bank pattern's name when it is a real name; otherwise look in the places
+        // banks actually put it (UPI reference, UPI ID, "trf to", "towards", ...).
+        val trimmedCounterparty = MerchantExtractor.resolve(counterparty?.trim()?.takeIf { it.isNotBlank() }, text)
 
         // Balance extraction is bank-agnostic and two-tier — see extractBalance().
         // Tier 1 is the original "Avl Bal" regex (verified against real ECS,
@@ -221,8 +236,19 @@ class TransactionParser(context: Context) {
             RegexOption.IGNORE_CASE
         )
 
-        private val STRONG_CREDIT_REGEX = Regex("\\b(credited|received)\\b", RegexOption.IGNORE_CASE)
-        private val STRONG_DEBIT_REGEX = Regex("\\b(debited|sent|spent|withdrawn)\\b", RegexOption.IGNORE_CASE)
+        // Besides the plain words, banks also write "Cr." / "Dr." (Bank of Baroda: "Rs.500 Dr.
+        // from A/C ... and Cr. to ..."), "a debit of" / "credit alert" (IDFC, HDFC) and, for
+        // cards, "used for/at" (ICICI: "has been used for a transaction of INR 1,500"). The
+        // abbreviations need their full stop or a following from/to/by, so "Dr" inside a
+        // name does not count. "debit card" / "credit card" deliberately do not match.
+        private val STRONG_CREDIT_REGEX = Regex(
+            "\\b(credited|received)\\b|\\bcr\\.(?=\\s)|\\bcr\\s+(?:to|by)\\b|\\bcredit\\s+(?:of|for|alert)\\b",
+            RegexOption.IGNORE_CASE
+        )
+        private val STRONG_DEBIT_REGEX = Regex(
+            "\\b(debited|sent|spent|withdrawn|swiped)\\b|\\bdr\\.(?=\\s)|\\bdr\\s+(?:from|to)\\b|\\bdebit\\s+(?:of|for|alert)\\b|\\bused\\s+(?:for|at)\\b",
+            RegexOption.IGNORE_CASE
+        )
         private val WEAK_DEBIT_REGEX = Regex("\\b(paid|payment)\\b", RegexOption.IGNORE_CASE)
 
         /**
@@ -276,6 +302,26 @@ class TransactionParser(context: Context) {
         // accidentally grab a phone number or reference number elsewhere
         // in the message. Applied only when the primary match found no
         // amount.
+        // The first rupee amount in the message that is not labelled as a balance, limit or
+        // due figure. Used only when the direction is known but no per-bank pattern found the
+        // amount (e.g. "Rs.500.00 Dr. from A/C ...", where the amount comes BEFORE the word).
+        private val LAST_RESORT_AMOUNT = Regex("(?i)(?:rs\\.?|inr|₹)\\s?([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
+        private val NOT_THE_AMOUNT_CONTEXT = Regex("(?i)(bal|balance|limit|lmt|avl|avail|available|due|outstanding|minimum|min)\\W*$")
+
+        internal fun lastResortAmount(text: String): String? {
+            for (m in LAST_RESORT_AMOUNT.findAll(text)) {
+                val before = text.substring(maxOf(0, m.range.first - 14), m.range.first)
+                if (NOT_THE_AMOUNT_CONTEXT.containsMatchIn(before)) continue
+                return m.groupValues[1]
+            }
+            return null
+        }
+
+        // A message with an amount but no debit/credit wording is only worth a "needs review"
+        // row if it plainly describes a card/ATM/POS transaction. Anything else (a balance
+        // update, a mandate notice, an offer) is not a transaction.
+        private val UNKNOWN_DIRECTION_HINTS = listOf("txn", "transaction", "purchase", "swiped", "atm", " pos ")
+
         private const val FALLBACK_AMOUNT_REGEX =
             "(?i)\\b(?:debited|credited|withdrawn|spent|paid|received)\\s+by\\s+(?:rs\\.?|inr|₹)?\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
     }

@@ -962,7 +962,7 @@ private fun MonthYearPickerDialog(initial: MonthRange, onDismiss: () -> Unit, on
 /**
  * One Export button for the period on screen, opening a small menu: PDF
  * report or CSV spreadsheet. A lock marks what needs Pro (a CSV can also be
- * unlocked once a month with a rewarded ad - the dialog that follows says so).
+ * unlocked up to 4 times a month with a rewarded ad - the dialog that follows says so).
  */
 @Composable
 private fun ExportMenuButton(pdfLocked: Boolean, csvLocked: Boolean, onPdf: () -> Unit, onCsv: () -> Unit) {

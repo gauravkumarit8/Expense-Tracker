@@ -8,7 +8,8 @@ import java.util.TimeZone
  * can be compiled and tested on their own. Two independent things:
  *
  *  1. A MONTHLY UNLOCK: a free user who watches one rewarded ad may use one
- *     Pro action (CSV export or import) once in that calendar month.
+ *     Pro action (CSV export or import) once; up to [MONTHLY_UNLOCK_LIMIT]
+ *     such uses (an ad each) per calendar month.
  *  2. A DAILY AD-FREE PASS: watching one rewarded ad hides the banner for
  *     the rest of the day. Offered (at most once a day) after the user has
  *     opened Search more than [SEARCH_VISIT_THRESHOLD] times that day.
@@ -24,6 +25,9 @@ import java.util.TimeZone
 object RewardLogic {
 
     const val SEARCH_VISIT_THRESHOLD = 4
+
+    /** Free CSV export/import uses per calendar month for a free user; each one needs its own rewarded ad. Was 1 before 2026-10-31. */
+    const val MONTHLY_UNLOCK_LIMIT = 4
     const val MONTH_TOLERANCE = 1
     const val DAY_TOLERANCE = 2
 
@@ -47,34 +51,66 @@ object RewardLogic {
 
     // ---------- 1. monthly unlock ----------
 
-    data class MonthlyUnlock(val earnedMonth: Int?, val usedMonth: Int?, val maxMonthSeen: Int?)
+    /**
+     * [earnedMonth]: a rewarded ad has been watched for a use that has not run
+     * yet (cleared when the use completes). [usedMonth] / [usesInMonth]: how
+     * many unlocked uses have completed in that month. [maxMonthSeen]: the
+     * clock-change guard described above.
+     */
+    data class MonthlyUnlock(
+        val earnedMonth: Int?,
+        val usedMonth: Int?,
+        val maxMonthSeen: Int?,
+        val usesInMonth: Int = 0
+    )
 
     val NO_UNLOCK = MonthlyUnlock(null, null, null)
 
     private fun month(s: MonthlyUnlock, now: Long): Int = effective(monthIndex(now), s.maxMonthSeen, MONTH_TOLERANCE)
 
-    /** Earned this month and not yet spent: the action may run without showing an ad. */
+    /** Unlocked uses already completed this month. */
+    fun usesThisMonth(s: MonthlyUnlock, now: Long): Int =
+        if (s.usedMonth == month(s, now)) s.usesInMonth else 0
+
+    /** Free uses still available this month (each one needs its own ad). */
+    fun usesLeft(s: MonthlyUnlock, now: Long): Int = Math.max(0, MONTHLY_UNLOCK_LIMIT - usesThisMonth(s, now))
+
+    /** An ad was watched for a use that has not run yet and the month's quota is not used up: the action may run without another ad. */
     fun isUnlockAvailable(s: MonthlyUnlock, now: Long): Boolean {
         val m = month(s, now)
-        return s.earnedMonth == m && s.usedMonth != m
+        return s.earnedMonth == m && usesLeft(s, now) > 0
     }
 
-    /** This month's unlock was earned and already spent: no more until next month. */
-    fun isUnlockSpent(s: MonthlyUnlock, now: Long): Boolean {
-        val m = month(s, now)
-        return s.earnedMonth == m && s.usedMonth == m
-    }
+    /** All [MONTHLY_UNLOCK_LIMIT] free uses of this month are taken: no more until next month. */
+    fun isUnlockSpent(s: MonthlyUnlock, now: Long): Boolean = usesLeft(s, now) == 0
 
-    /** Called when the rewarded ad has been watched. Earning twice in a month changes nothing. */
+    /** Called when the rewarded ad has been watched. Earning twice before the use runs, or with the quota used up, changes nothing. */
     fun earnUnlock(s: MonthlyUnlock, now: Long): MonthlyUnlock {
         val m = month(s, now)
-        return if (s.earnedMonth == m) s.copy(maxMonthSeen = m) else s.copy(earnedMonth = m, maxMonthSeen = m)
+        return when {
+            usesLeft(s, now) == 0 -> s.copy(maxMonthSeen = m)
+            s.earnedMonth == m -> s.copy(maxMonthSeen = m)
+            else -> s.copy(earnedMonth = m, maxMonthSeen = m)
+        }
     }
 
-    /** Called when the unlocked action has actually completed. */
+    /** Called when the unlocked action has actually completed. Counts one use and needs a fresh ad for the next. */
     fun spendUnlock(s: MonthlyUnlock, now: Long): MonthlyUnlock {
         val m = month(s, now)
-        return if (s.earnedMonth == m) s.copy(usedMonth = m, maxMonthSeen = m) else s
+        if (s.earnedMonth != m || usesLeft(s, now) == 0) return s
+        return s.copy(earnedMonth = null, usedMonth = m, usesInMonth = usesThisMonth(s, now) + 1, maxMonthSeen = m)
+    }
+
+    /**
+     * Rebuilds the state from what was stored. State saved before 2026-10-31
+     * had no use counter and a single use per month: a stored [usedMonth]
+     * means one use was taken, and earned == used means it was already spent
+     * (so it must not read as a fresh, unspent unlock under the new rules).
+     */
+    fun fromStored(earned: Int?, used: Int?, maxSeen: Int?, uses: Int?): MonthlyUnlock {
+        if (uses != null) return MonthlyUnlock(earned, used, maxSeen, uses)
+        if (used == null) return MonthlyUnlock(earned, null, maxSeen, 0)
+        return MonthlyUnlock(if (earned == used) null else earned, used, maxSeen, 1)
     }
 
     // ---------- 2. daily ad-free pass and search-visit prompt ----------

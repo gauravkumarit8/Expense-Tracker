@@ -14,6 +14,8 @@ import androidx.compose.runtime.Composable
 internal fun RewardedUnlockDialog(
     featureName: String,
     spentThisMonth: Boolean,
+    usesLeft: Int,
+    monthlyLimit: Int,
     adReady: Boolean,
     onWatchAd: () -> Unit,
     onUpgrade: () -> Unit,
@@ -22,10 +24,10 @@ internal fun RewardedUnlockDialog(
     if (spentThisMonth) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Free use already taken") },
+            title = { Text("Free uses used up") },
             text = {
                 Text(
-                    "You've already used this month's free use of a Pro feature. It comes back on the 1st. " +
+                    "You've used all $monthlyLimit free uses of Pro features this month. They come back on the 1st. " +
                         "Upgrade to Pro to use $featureName whenever you like."
                 )
             },
@@ -38,7 +40,7 @@ internal fun RewardedUnlockDialog(
             title = { Text("$featureName is a Pro feature") },
             text = {
                 Text(
-                    "You can use it once this month for free: watch one short ad and it unlocks right after. " +
+                    "You can use it for free up to $monthlyLimit times a month ($usesLeft left): watch one short ad and it unlocks right after. " +
                         "How long the ad runs is up to the advertiser."
                 )
             },
