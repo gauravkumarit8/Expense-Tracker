@@ -45,6 +45,7 @@ import com.autoexpensetracker.ui.theme.BrandGreen
 import com.autoexpensetracker.ui.theme.MutedText
 import com.autoexpensetracker.ui.theme.SemanticGray
 import com.autoexpensetracker.ui.theme.SemanticRed
+import com.autoexpensetracker.util.MonthPace
 import com.autoexpensetracker.util.MonthRange
 import com.autoexpensetracker.util.SalaryDetector
 import com.autoexpensetracker.util.SinceLastSalary
@@ -174,6 +175,37 @@ internal fun DashboardScreen(
             .take(3)
     }
 
+    // "How is this month going": projection, comparison with last month and,
+    // only if budgets exist, a safe daily amount. Logic lives in MonthPace (tested).
+    val monthPaceLines = remember(allTransactions, budgets, spent, spendByCategory) {
+        val cal = Calendar.getInstance()
+        val prev = (cal.clone() as Calendar).apply { add(Calendar.MONTH, -1) }
+        val lastRange = MonthRange(prev.get(Calendar.YEAR), prev.get(Calendar.MONTH))
+        val lastSpent = allTransactions
+            .filter { it.direction == Direction.SENT && lastRange.contains(it.timestampMillis) }
+            .sumOf { it.amount }
+        var limitTotal = 0.0
+        var budgetSpent = 0.0
+        for (b in budgets) {
+            val cat = Category.fromNameOrNull(b.category) ?: continue
+            if (!BudgetPolicy.isBudgetable(cat) || b.monthlyLimit <= 0) continue
+            limitTotal += b.monthlyLimit
+            budgetSpent += spendByCategory[cat] ?: 0.0
+        }
+        MonthPace.lines(
+            MonthPace.compute(
+                MonthPace.Input(
+                    spent = spent,
+                    dayOfMonth = cal.get(Calendar.DAY_OF_MONTH),
+                    daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH),
+                    lastMonthSpent = lastSpent,
+                    budgetLimit = limitTotal,
+                    budgetSpent = budgetSpent
+                )
+            )
+        ) { formatInrWhole(it) }
+    }
+
     val reminders by reminderDao.getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val upcomingReminders = remember(reminders) {
         val today = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
@@ -238,6 +270,10 @@ internal fun DashboardScreen(
 
             item {
                 MonthSummaryHeroCard(spent = spent, received = received, net = net, onClick = onSeeCharts)
+            }
+
+            if (monthPaceLines.isNotEmpty()) {
+                item { MonthPaceCard(lines = monthPaceLines) }
             }
 
             item {

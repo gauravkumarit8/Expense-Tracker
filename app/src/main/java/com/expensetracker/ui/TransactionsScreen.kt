@@ -32,6 +32,7 @@ import com.autoexpensetracker.util.CategoryRuleActions
 import com.autoexpensetracker.util.CategoryRuleStore
 import com.autoexpensetracker.util.CategoryRules
 import com.autoexpensetracker.util.RecentSearchStore
+import com.autoexpensetracker.util.BankNames
 import com.autoexpensetracker.util.SearchLogic
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -1018,6 +1019,7 @@ private fun filterTransactions(
         val matchesQuery = q.isEmpty() ||
             (tx.merchantOrContact?.contains(q, ignoreCase = true) == true) ||
             tx.bankOrSource.contains(q, ignoreCase = true) ||
+            BankNames.friendly(tx.bankOrSource).contains(q, ignoreCase = true) ||
             (tx.note?.contains(q, ignoreCase = true) == true) ||
             (tx.tags?.contains(q, ignoreCase = true) == true) ||
             (amountQuery != null && SearchLogic.amountMatches(tx.amount, amountQuery)) ||
@@ -1458,7 +1460,7 @@ internal fun TransactionRow(tx: Transaction, timeFormat: SimpleDateFormat, onCli
                     if (category != null) { Spacer(modifier = Modifier.width(4.dp)); Text(category.emoji, style = MaterialTheme.typography.bodySmall) }
                 }
                 Text(
-                    "${tx.bankOrSource} • ${timeFormat.format(Date(tx.timestampMillis))}" + if (tx.needsReview) " • Needs review" else "",
+                    "${BankNames.friendly(tx.bankOrSource)} • ${timeFormat.format(Date(tx.timestampMillis))}" + if (tx.needsReview) " • Needs review" else "",
                     style = MaterialTheme.typography.bodySmall, color = if (tx.needsReview) SemanticOrange else MutedText
                 )
                 if (!tx.note.isNullOrBlank()) Text("📝 ${tx.note}", style = MaterialTheme.typography.bodySmall, color = MutedText, maxLines = 1)
@@ -1605,7 +1607,7 @@ private fun TransactionDetailDialog(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 } else {
-                    Text("${formatInr(transaction.amount)} • ${transaction.bankOrSource}", style = MaterialTheme.typography.bodyMedium, color = MutedText)
+                    Text("${formatInr(transaction.amount)} • ${BankNames.friendly(transaction.bankOrSource)}", style = MaterialTheme.typography.bodyMedium, color = MutedText)
                     if (transaction.balanceAfter != null) {
                         Text("Balance after: ${formatInr(transaction.balanceAfter)}", style = MaterialTheme.typography.bodySmall, color = MutedText)
                     }
