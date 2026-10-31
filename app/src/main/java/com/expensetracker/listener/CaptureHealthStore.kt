@@ -21,6 +21,7 @@ object CaptureHealthStore {
     private const val KEY_DISCONNECTED = "disconnected_at"
     private const val KEY_CANDIDATE = "last_candidate_at"
     private const val KEY_CAPTURED = "last_captured_at"
+    private const val KEY_READ_EXISTING = "read_existing_alerts"
 
     data class Snapshot(val connectedAt: Long, val disconnectedAt: Long, val lastCandidateAt: Long, val lastCapturedAt: Long)
 
@@ -32,6 +33,18 @@ object CaptureHealthStore {
     fun snapshot(context: Context): Snapshot {
         val p = prefs(context)
         return Snapshot(p.getLong(KEY_CONNECTED, 0L), p.getLong(KEY_DISCONNECTED, 0L), p.getLong(KEY_CANDIDATE, 0L), p.getLong(KEY_CAPTURED, 0L))
+    }
+
+    /**
+     * Whether the one-time look at the alerts already in the notification shade has happened
+     * (see NotificationCaptureService). A yes/no only - no content. Like the rest of this
+     * store it survives "Delete all data" on purpose: after a wipe, old alerts still sitting
+     * in the shade must not flow straight back in.
+     */
+    fun hasReadExistingAlerts(context: Context): Boolean = prefs(context).getBoolean(KEY_READ_EXISTING, false)
+
+    fun markReadExistingAlerts(context: Context) {
+        prefs(context).edit().putBoolean(KEY_READ_EXISTING, true).apply()
     }
 
     private fun stamp(context: Context, key: String) {

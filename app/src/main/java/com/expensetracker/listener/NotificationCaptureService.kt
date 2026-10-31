@@ -96,6 +96,38 @@ class NotificationCaptureService : NotificationListenerService() {
         super.onListenerConnected()
         refreshDefaultSmsPackage()
         CaptureHealthStore.recordConnected(applicationContext)
+        readAlertsAlreadyInShade()
+    }
+
+    /**
+     * Once, the first time the listener connects: run the bank and UPI alerts that are ALREADY
+     * in the notification shade through exactly the same filter and parser as a live alert.
+     *
+     * Why: a notification listener only hears about alerts posted after it connects, so a new
+     * user who has just turned access on sees an empty app even if two bank alerts are sitting,
+     * unread, in the shade. Reading them gives that user a first real transaction within
+     * seconds, which is the point at which the app starts to make sense.
+     *
+     * Only notifications that pass the normal finance filter are used, nothing else is read,
+     * and a repeat of an alert is dropped by the usual duplicate check. It runs once only
+     * (not on every reconnect, when the shade can hold days-old alerts already recorded).
+     */
+    private fun readAlertsAlreadyInShade() {
+        if (CaptureHealthStore.hasReadExistingAlerts(applicationContext)) return
+        // Marked BEFORE reading: if anything below fails it must not be retried on every connect.
+        CaptureHealthStore.markReadExistingAlerts(applicationContext)
+        try {
+            val existing = activeNotifications ?: return
+            for (sbn in existing) {
+                try {
+                    onNotificationPosted(sbn)
+                } catch (e: Exception) {
+                    // One odd notification must not stop the rest, or the connection itself.
+                }
+            }
+        } catch (e: Exception) {
+            // Reading the shade is a bonus; failing to do so must never break capture.
+        }
     }
 
     // NotificationListenerService connections can be dropped by the OS
