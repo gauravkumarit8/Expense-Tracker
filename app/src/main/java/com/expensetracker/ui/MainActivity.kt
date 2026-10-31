@@ -255,8 +255,8 @@ class MainActivity : FragmentActivity() {
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 // ---- Rewarded ads (REQUIREMENTS.md 2026-10-20) ----
-                // 1) A free user can use CSV export or import once a calendar
-                //    month after watching one rewarded ad.
+                // 1) A free user can use CSV export or import up to 4 times a
+                //    calendar month, watching one rewarded ad before each use.
                 // 2) After opening Search more than 4 times in a day, a free
                 //    user is offered (once a day, optional) one ad for a
                 //    banner-free day.
@@ -281,13 +281,14 @@ class MainActivity : FragmentActivity() {
                 fun rewardHint(): String {
                     val now = System.currentTimeMillis()
                     return when {
-                        RewardLogic.isUnlockAvailable(unlock, now) -> "Unlocked for this month - tap to use it"
-                        RewardLogic.isUnlockSpent(unlock, now) -> "This month's free use is taken - back on the 1st"
-                        else -> "Pro feature - watch a short ad to use it once this month"
+                        RewardLogic.isUnlockAvailable(unlock, now) -> "Ad watched - tap to use it"
+                        RewardLogic.isUnlockSpent(unlock, now) ->
+                            "All ${RewardLogic.MONTHLY_UNLOCK_LIMIT} free uses this month are taken - back on the 1st"
+                        else -> "Pro feature - watch a short ad to use it (${RewardLogic.usesLeft(unlock, now)} of ${RewardLogic.MONTHLY_UNLOCK_LIMIT} free uses left this month)"
                     }
                 }
 
-                /** CSV export / import: Pro, or free once a month after an ad, or (rewards off) Pro only as before. */
+                /** CSV export / import: Pro, or free up to 4 times a month (an ad each time), or (rewards off) Pro only as before. */
                 fun requireProOrReward(featureName: String, action: () -> Unit) {
                     if (isPro) { action(); return }
                     if (!rewardsEnabled) { requirePro(action); return }
@@ -965,6 +966,8 @@ class MainActivity : FragmentActivity() {
                         RewardedUnlockDialog(
                             featureName = prompt.featureName,
                             spentThisMonth = RewardLogic.isUnlockSpent(unlock, System.currentTimeMillis()),
+                            usesLeft = RewardLogic.usesLeft(unlock, System.currentTimeMillis()),
+                            monthlyLimit = RewardLogic.MONTHLY_UNLOCK_LIMIT,
                             adReady = rewardedAds.isReady,
                             onWatchAd = { watchAdForUnlock(prompt) },
                             onUpgrade = { rewardPrompt = null; requirePro(prompt.action) },

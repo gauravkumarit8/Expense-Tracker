@@ -93,6 +93,7 @@ import com.autoexpensetracker.util.DailyCheckInStore
 import com.autoexpensetracker.worker.DailyCheckInScheduler
 import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
+import com.autoexpensetracker.util.BalanceMerge
 import com.autoexpensetracker.util.BankSourceMatcher
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
@@ -135,48 +136,20 @@ internal fun ChartsScreen(allTransactions: List<Transaction>) {
     val startOfMonth = selectedMonth.startOfMonthMillis()
     val endOfMonth = selectedMonth.endOfMonthMillis()
 
-    // Latest known balance per bank/account source — most recent transaction
-    // (by timestamp) that happened to include a parsed balanceAfter value.
-    //
-    // Grouped by BankSourceMatcher.accountKey, NOT the raw sender string: the
-    // same bank arrives under different route prefixes ("JD-SLCBNK-T" vs
-    // "JK-SLCBNK-T"), which used to show one real account as two cards. The
-    // card is labelled with the sender string of the most recent message.
-    val autoBalances = remember(allTransactions) {
-        allTransactions
-            .filter { it.balanceAfter != null }
-            .groupBy { BankSourceMatcher.accountKey(it.bankOrSource) }
-            .mapValues { (_, txs) -> txs.maxByOrNull { it.timestampMillis }!! }
-    }
-
-    // Merge auto-detected balances with manual overrides/additions, drop
-    // anything the user has deleted, sort newest-first. A manual entry for
-    // a source that also has auto-detected transactions wins outright
-    // (see ManualBalanceStore doc comment on why that's unconditional).
+    // Merge auto-detected balances with manual entries and drop anything the
+    // user has deleted. For an account that has both, the NEWER figure wins
+    // (see BalanceMerge): a typed correction holds until the next captured
+    // alert with a balance, then the card follows the bank again.
     data class BalanceEntry(val source: String, val amount: Double, val asOfMillis: Long, val isManual: Boolean)
 
-    val latestBalances = remember(autoBalances, manualEntries, hiddenSources) {
-        // Manual entries are matched by account key too, so a correction typed
-        // under "JD-SLCBNK-T" also overrides auto-detected "JK-SLCBNK-T", and
-        // two manual cards for the same bank collapse to the most recent one.
-        // Hand-typed names ("HDFC", "CBI") aren't sender-ID-shaped, so they
-        // keep their own distinct key and never merge by accident.
-        val manualByKey = manualEntries
-            .groupBy { BankSourceMatcher.accountKey(it.source) }
-            .mapValues { (_, entries) -> entries.maxByOrNull { it.asOfMillis }!! }
-        // Hiding ("deleting") an AUTO-detected card hides every route variant
-        // of that bank. Manual cards keep the exact-source rule they always
-        // had, so adding an account by hand always shows it (upsert() un-hides
-        // that exact source).
-        val hiddenKeys = hiddenSources.map { BankSourceMatcher.accountKey(it) }.toSet()
-        val autoOnly = autoBalances
-            .filterKeys { it !in manualByKey.keys && it !in hiddenKeys }
-            .values
-            .map { tx -> BalanceEntry(tx.bankOrSource, tx.balanceAfter!!, tx.timestampMillis, isManual = false) }
-        val manual = manualByKey.values
-            .filterNot { hiddenSources.contains(it.source) }
-            .map { BalanceEntry(it.source, it.amount, it.asOfMillis, isManual = true) }
-        (autoOnly + manual).sortedByDescending { it.asOfMillis }
+    val latestBalances = remember(allTransactions, manualEntries, hiddenSources) {
+        BalanceMerge.resolve(
+            auto = allTransactions
+                .filter { it.balanceAfter != null }
+                .map { BalanceMerge.Candidate(it.bankOrSource, it.balanceAfter!!, it.timestampMillis) },
+            manual = manualEntries.map { BalanceMerge.Candidate(it.source, it.amount, it.asOfMillis) },
+            hiddenSources = hiddenSources
+        ).map { BalanceEntry(it.source, it.amount, it.asOfMillis, it.isManual) }
     }
 
     val thisMonthSpend = remember(allTransactions, startOfMonth, endOfMonth) {

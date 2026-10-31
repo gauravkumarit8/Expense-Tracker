@@ -17,6 +17,7 @@ object RewardStore {
 
     private const val K_EARNED = "earned_month"
     private const val K_USED = "used_month"
+    private const val K_USES = "uses_in_month"
     private const val K_MAX_MONTH = "max_month_seen"
     private const val K_AD_FREE = "ad_free_day"
     private const val K_MAX_DAY = "max_day_seen"
@@ -33,13 +34,15 @@ object RewardStore {
 
     fun loadUnlock(context: Context): RewardLogic.MonthlyUnlock {
         val p = prefs(context)
-        return RewardLogic.MonthlyUnlock(p.optInt(K_EARNED), p.optInt(K_USED), p.optInt(K_MAX_MONTH))
+        // K_USES is absent in state saved by older versions; fromStored() handles that.
+        return RewardLogic.fromStored(p.optInt(K_EARNED), p.optInt(K_USED), p.optInt(K_MAX_MONTH), p.optInt(K_USES))
     }
 
     private fun save(context: Context, u: RewardLogic.MonthlyUnlock): RewardLogic.MonthlyUnlock {
         prefs(context).edit()
             .putInt(K_EARNED, u.earnedMonth ?: NONE)
             .putInt(K_USED, u.usedMonth ?: NONE)
+            .putInt(K_USES, u.usesInMonth)
             .putInt(K_MAX_MONTH, u.maxMonthSeen ?: NONE)
             .apply()
         return u

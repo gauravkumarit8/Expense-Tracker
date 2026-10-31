@@ -373,8 +373,8 @@ internal fun SettingsScreen(
             }
         }
         // 2026-10-20: CSV export and import are also shown to free users when
-        // rewarded ads are available, because those two can be used once a
-        // month after watching an ad (see RewardLogic). Backup & Restore stays
+        // rewarded ads are available, because those two can be used up to 4
+        // times a month, watching an ad each time (see RewardLogic). Backup & Restore stays
         // Pro-only and hidden. When rewarded ads are not configured the rows
         // stay hidden for free users exactly as before.
         if (isPro || rewardsEnabled) {

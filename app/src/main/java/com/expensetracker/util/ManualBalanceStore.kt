@@ -14,12 +14,10 @@ import kotlinx.serialization.json.Json
  *
  * - An **override** for a source that DOES have auto-detected
  *   transactions, when the user corrects the figure by hand (e.g. the
- *   last captured message was stale, or parsing under/over-shot). Wins
- *   over the auto-detected value whenever present, regardless of which
- *   one is more recent — an explicit correction should stick until the
- *   user changes it again, not get silently overwritten by the next
- *   captured message. (If that's ever undesirable for a given source,
- *   removing the override lets auto-detection take back over.)
+ *   last captured message was stale, or parsing under/over-shot). It holds
+ *   only until the next captured message that carries a balance: the NEWER
+ *   of the two wins (see [BalanceMerge]). Before 2026-10-31 an override won
+ *   forever, which froze the card after a single edit.
  * - A purely **manual entry** for a source with NO transaction history at
  *   all (a cash account, or a bank whose notifications aren't captured),
  *   added entirely through the "+ Add account" UI. Stored identically to
