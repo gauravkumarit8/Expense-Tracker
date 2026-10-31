@@ -94,6 +94,7 @@ import com.autoexpensetracker.worker.DailyCheckInScheduler
 import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
 import com.autoexpensetracker.util.BalanceMerge
+import com.autoexpensetracker.util.BankNames
 import com.autoexpensetracker.util.BankSourceMatcher
 import com.autoexpensetracker.util.ManualBalanceStore
 import com.android.billingclient.api.ProductDetails
@@ -384,11 +385,13 @@ private fun BalanceRow(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
+    // Display name only ("Central Bank of India" instead of "JK-CENTBK-T"); the raw source still drives grouping, edit and delete.
+    val shownName = remember(source) { BankNames.friendly(source) }
 
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Remove $source?") },
+            title = { Text("Remove $shownName?") },
             text = { Text("This hides it from Account balances. If new messages from this bank arrive later, add it back manually to show it again.") },
             confirmButton = {
                 TextButton(onClick = { showDeleteConfirm = false; onDelete() }) { Text("Remove") }
@@ -397,14 +400,14 @@ private fun BalanceRow(
         )
     }
     if (showHistory) {
-        BalanceHistoryDialog(source = source, history = history, visible = visible, onDismiss = { showHistory = false })
+        BalanceHistoryDialog(source = shownName, history = history, visible = visible, onDismiss = { showHistory = false })
     }
 
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
-                    Text(source, fontWeight = FontWeight.Medium)
+                    Text(shownName, fontWeight = FontWeight.Medium)
                     if (isManual) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("(manual)", style = MaterialTheme.typography.labelSmall, color = MutedText)
@@ -420,10 +423,10 @@ private fun BalanceRow(
                 Text("as of ${dateFormat.format(Date(asOfMillis))}", style = MaterialTheme.typography.bodySmall, color = MutedText)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { showHistory = true }, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.ShowChart, contentDescription = "View $source balance history", tint = MutedText, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.ShowChart, contentDescription = "View $shownName balance history", tint = MutedText, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = onEdit, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit $source balance", tint = MutedText, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit $shownName balance", tint = MutedText, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Filled.Delete, contentDescription = "Remove $source", tint = SemanticRed, modifier = Modifier.size(18.dp))
