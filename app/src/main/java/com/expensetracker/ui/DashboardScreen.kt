@@ -99,7 +99,11 @@ internal fun DashboardScreen(
     transactionsLoaded: Boolean,
     onEnableNotificationAccess: () -> Unit,
     onImportHistory: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    showWeeklyInvite: Boolean,
+    onWeeklyInviteAccept: () -> Unit,
+    onWeeklyInviteDismiss: () -> Unit,
+    showCaptureOffWarning: Boolean
 ) {
     val monthRange = remember { MonthRange.current() }
     val monthTransactions = remember(allTransactions) {
@@ -214,6 +218,15 @@ internal fun DashboardScreen(
                         onOpenSettings = onOpenSettings
                     )
                 }
+            }
+
+            // Auto-capture worked before and has stopped: say so, with the fix one tap away.
+            if (showCaptureOffWarning) {
+                item { CaptureOffCard(onTurnOn = onEnableNotificationAccess) }
+            }
+            // One-time offer of the weekly summary notification.
+            if (showWeeklyInvite) {
+                item { WeeklySummaryInviteCard(onTurnOn = onWeeklyInviteAccept, onNotNow = onWeeklyInviteDismiss) }
             }
 
             item {

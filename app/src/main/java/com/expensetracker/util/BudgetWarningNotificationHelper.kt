@@ -39,6 +39,7 @@ object BudgetWarningNotificationHelper {
             .setContentTitle(title)
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(NotificationIntents.openApp(context))
             .setAutoCancel(true)
             .build()
         NotificationManagerCompat.from(context).notify(("budget-" + category.name).hashCode(), notification)

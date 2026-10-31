@@ -87,6 +87,9 @@ import com.autoexpensetracker.util.BalanceVisibilityStore
 import com.autoexpensetracker.util.ThemeMode
 import com.autoexpensetracker.util.ThemePreferenceStore
 import com.autoexpensetracker.util.DailyCheckInStore
+import com.autoexpensetracker.util.HomeNotices
+import com.autoexpensetracker.util.WeeklyDigestStore
+import com.autoexpensetracker.worker.WeeklyDigestScheduler
 import com.autoexpensetracker.worker.DailyCheckInScheduler
 import com.autoexpensetracker.util.formatInr
 import com.autoexpensetracker.util.formatInrWhole
@@ -175,6 +178,8 @@ class MainActivity : FragmentActivity() {
 
                 var appLockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
                 var dailyCheckInEnabled by remember { mutableStateOf(DailyCheckInStore.isEnabled(context)) }
+                var weeklyDigestEnabled by remember { mutableStateOf(WeeklyDigestStore.isEnabled(context)) }
+                var weeklyInviteAnswered by remember { mutableStateOf(WeeklyDigestStore.isInviteAnswered(context)) }
                 var isUnlocked by remember { mutableStateOf(!appLockEnabled) }
                 // Re-lock every time the app leaves the foreground (covers
                 // both "user backgrounds the app" and process death/recreate)
@@ -342,6 +347,28 @@ class MainActivity : FragmentActivity() {
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission()
                 ) { }
+
+                /**
+                 * Android 13+ drops notifications until the user allows them, and until now the
+                 * app only asked when the Reminders tab was opened. So turning on a notification
+                 * feature asks right then. Does nothing visible if already allowed.
+                 */
+                fun askNotificationPermission() {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+
+                fun setWeeklyDigest(wantEnabled: Boolean) {
+                    WeeklyDigestStore.setEnabled(context, wantEnabled)
+                    weeklyDigestEnabled = wantEnabled
+                    if (wantEnabled) {
+                        WeeklyDigestScheduler.schedule(context)
+                        askNotificationPermission()
+                    } else {
+                        WeeklyDigestScheduler.cancel(context)
+                    }
+                }
 
                 var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
                 // null until the database has answered. Without that, "no transactions yet" would be
@@ -701,7 +728,8 @@ class MainActivity : FragmentActivity() {
                                         selected = screen == s,
                                         onClick = {
                                             screen = s
-                                            if (s == Screen.REMINDERS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            // Budgets too: budget warnings are notifications, and were silently dropped on Android 13+ for anyone who never opened Reminders.
+                                            if ((s == Screen.REMINDERS || s == Screen.BUDGETS) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                             }
                                         },
@@ -847,8 +875,15 @@ class MainActivity : FragmentActivity() {
                                 onDailyCheckInToggle = { wantEnabled ->
                                     DailyCheckInStore.setEnabled(context, wantEnabled)
                                     dailyCheckInEnabled = wantEnabled
-                                    if (wantEnabled) DailyCheckInScheduler.schedule(context) else DailyCheckInScheduler.cancel(context)
+                                    if (wantEnabled) {
+                                        DailyCheckInScheduler.schedule(context)
+                                        askNotificationPermission()
+                                    } else {
+                                        DailyCheckInScheduler.cancel(context)
+                                    }
                                 },
+                                weeklyDigestEnabled = weeklyDigestEnabled,
+                                onWeeklyDigestToggle = { setWeeklyDigest(it) },
                                 onShowPrivacyOptions = {
                                     ConsentManager.showPrivacyOptionsForm(this@MainActivity) {
                                         // Re-resolve after the user
@@ -901,7 +936,22 @@ class MainActivity : FragmentActivity() {
                                             showImportStatementDialog = true
                                         }
                                     },
-                                    onOpenSettings = { showSettings = true }
+                                    onOpenSettings = { showSettings = true },
+                                    showWeeklyInvite = HomeNotices.shouldInviteWeekly(allTransactions.size, weeklyDigestEnabled, weeklyInviteAnswered),
+                                    onWeeklyInviteAccept = {
+                                        WeeklyDigestStore.setInviteAnswered(context)
+                                        weeklyInviteAnswered = true
+                                        setWeeklyDigest(true)
+                                    },
+                                    onWeeklyInviteDismiss = {
+                                        WeeklyDigestStore.setInviteAnswered(context)
+                                        weeklyInviteAnswered = true
+                                    },
+                                    showCaptureOffWarning = HomeNotices.shouldWarnCaptureOff(
+                                        transactionsLoaded = transactionsLoaded,
+                                        autoCapturedCount = remember(allTransactions.size) { ReviewPromptStore.capturedCount(context) },
+                                        accessGranted = notificationAccessGranted
+                                    )
                                 )
                                 Screen.TRANSACTIONS -> TransactionsScreen(
                                     transactionDao = transactionDao,

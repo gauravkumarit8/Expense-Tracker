@@ -42,6 +42,7 @@ object ReminderNotificationHelper {
             .setContentTitle("How'd today go?")
             .setContentText("Take a minute to check today's spending")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(NotificationIntents.openApp(context))
             .setAutoCancel(true)
             .build()
         NotificationManagerCompat.from(context).notify(CHECKIN_NOTIFICATION_ID, notification)
@@ -56,6 +57,7 @@ object ReminderNotificationHelper {
             .setContentTitle(title)
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(NotificationIntents.openApp(context))
             .setAutoCancel(true)
             .build()
 
