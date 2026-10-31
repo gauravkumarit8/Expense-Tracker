@@ -32,6 +32,7 @@ object PriceChangeNotificationHelper {
             .setContentTitle(title)
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(NotificationIntents.openApp(context))
             .setAutoCancel(true)
             .build()
         NotificationManagerCompat.from(context)

@@ -26,7 +26,7 @@ object ReviewPromptStore {
     private const val KEY_LAST_PROMPT_MILLIS = "last_prompt_millis"
     private const val KEY_PROMPT_COUNT = "prompt_count"
 
-    // The thresholds (5 auto-captured transactions, 90 days apart, 3 asks
+    // The thresholds (3 auto-captured transactions, 90 days apart, 3 asks
     // ever) live in ReviewPolicy, which has no Android dependencies so they
     // can be tested off-device.
 

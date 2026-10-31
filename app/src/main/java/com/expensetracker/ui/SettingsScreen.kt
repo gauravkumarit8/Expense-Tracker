@@ -252,6 +252,8 @@ internal fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     dailyCheckInEnabled: Boolean,
     onDailyCheckInToggle: (Boolean) -> Unit,
+    weeklyDigestEnabled: Boolean,
+    onWeeklyDigestToggle: (Boolean) -> Unit,
     onShowPrivacyOptions: () -> Unit
 ) {
     val context = LocalContext.current
@@ -315,6 +317,17 @@ internal fun SettingsScreen(
                 checked = dailyCheckInEnabled,
                 enabled = true,
                 onCheckedChange = onDailyCheckInToggle
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+        item {
+            SettingsToggleRow(
+                icon = Icons.Filled.NotificationsActive,
+                title = "Weekly summary",
+                subtitle = if (weeklyDigestEnabled) "A Sunday-evening summary of your week's spending" else "Get one short summary of your spending each week",
+                checked = weeklyDigestEnabled,
+                enabled = true,
+                onCheckedChange = onWeeklyDigestToggle
             )
             Spacer(modifier = Modifier.height(20.dp))
         }

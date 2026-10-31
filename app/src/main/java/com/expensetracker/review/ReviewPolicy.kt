@@ -11,7 +11,7 @@ package com.autoexpensetracker.review
  *  - at least [MIN_INTERVAL_DAYS] between attempts.
  */
 object ReviewPolicy {
-    const val MIN_CAPTURED_TRANSACTIONS = 5
+    const val MIN_CAPTURED_TRANSACTIONS = 3
     const val MAX_PROMPTS_EVER = 3
     const val MIN_INTERVAL_DAYS = 90L
 
